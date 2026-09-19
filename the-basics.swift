@@ -168,3 +168,65 @@ func describe(heartRate: Int?) {
 
 describe(heartRate: 72)
 describe(heartRate: nil)
+
+// MARK: - Error Handling
+
+enum WorkoutError: Error {
+    case emptyName
+    case invalidDuration
+}
+
+func validateWorkout(name: String, durationText: String) throws -> Int {
+    guard !name.isEmpty else {
+        throw WorkoutError.emptyName
+    }
+
+    guard let time = Int(durationText), time > 0 else {
+        throw WorkoutError.invalidDuration
+    }
+
+    return time
+}
+
+do {
+    let workout = try validateWorkout(name: "Running", durationText: "35")
+    print("Valid: \(workout) min")
+} catch WorkoutError.emptyName {
+    print("Name required")
+} catch WorkoutError.invalidDuration {
+    print("Invalid duration")
+} catch {
+    print("Unexpected: \(error)")
+}
+
+do {
+    let workout = try validateWorkout(name: "", durationText: "35")
+    print("Valid: \(workout) min")
+} catch WorkoutError.emptyName {
+    print("Name required")
+} catch WorkoutError.invalidDuration {
+    print("Invalid duration")
+} catch {
+    print("Unexpected: \(error)")
+}
+
+do {
+    let workout = try validateWorkout(name: "Running", durationText: "abc")
+    print("Valid: \(workout) min")
+} catch WorkoutError.emptyName {
+    print("Name required")
+} catch WorkoutError.invalidDuration {
+    print("Invalid duration")
+} catch {
+    print("Unexpected: \(error)")
+}
+
+let quickCheck = try? validateWorkout(name: "Cycling", durationText: "45")
+if let quickCheck {
+    print("Quick Check: \(quickCheck) min")
+} else {
+    print("Quick check failed.")
+}
+
+// let userAge = -1
+// assert(userAge >= 0, "Age can't be negative")
