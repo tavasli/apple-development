@@ -120,3 +120,51 @@ nil ise değerin hiç olmadığını belirtir.
 Kullanıcıya bir varsayılan değer göstermek doğru bir yaklaşım değildir.
 Doğru olan kullanıcıya verinin olmadığını doğru biçimde ifade etmektir.
 */
+
+func welcome(nickname: String?) {
+    guard let nickname, !nickname.isEmpty else {
+        print("Welcome, guest!")
+        return
+    }
+
+    print("Welcome, \(nickname)!")
+}
+
+welcome(nickname: nil)
+welcome(nickname: "")
+welcome(nickname: "Mustafa")
+
+func logWorkout(name: String?, durationText: String) {
+    guard let name, !name.isEmpty else {
+        print("Name required!")
+        return
+    }
+
+    guard let time = Int(durationText), time > 0 else {
+        print("Invalid duration!")
+        return
+    }
+
+    print("Logged \(name): \(time) min")
+}
+
+logWorkout(name: "Running", durationText: "35")
+logWorkout(name: nil, durationText: "35")
+logWorkout(name: "Running", durationText: "-5")
+
+/*
+let forced = Int("abc")!
+Çöker çünkü kesin var dediğimiz şey yok.
+*/
+
+func describe(heartRate: Int?) {
+    switch heartRate {
+    case .some(let bpm):
+        print("Heart rate: \(bpm) bpm")
+    case .none:
+        print("No heart rate data.")
+    }
+}
+
+describe(heartRate: 72)
+describe(heartRate: nil)
