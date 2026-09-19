@@ -51,3 +51,34 @@ if isGoalReached {
 } else {
     print("Keep pushing, you're almost there.")
 }
+
+// MARK: - Tuples
+
+let lastWorkout = (type: "Running", durationMinutes: 35, calories: 300)
+print(lastWorkout.calories)
+print(lastWorkout.1)
+// İsimle erişmek kodun anlaşılabilirliği açısından daha doğru olur.
+
+let (type, _, calories) = lastWorkout
+print(type)
+print(calories)
+
+func activitySummary(stepsCount: Int) -> (distance: Kilometers, goalProgress: Double) {
+    let distance: Kilometers = Double(stepsCount) * strideLength / 1000
+    let goalProgress = Double(stepsCount) / Double(dailyStepsGoal) * 100
+    return (distance, goalProgress)
+}
+
+let firstActivity = activitySummary(stepsCount: dailySteps)
+let secondActivity = activitySummary(stepsCount: 7000)
+print(firstActivity.distance)
+print(secondActivity.goalProgress)
+
+let firstWorkout = (calories: 300, durationMinutes: 70)
+let secondWorkout = (calories: 300, durationMinutes: 50)
+print(firstWorkout < secondWorkout)
+
+/*
+Gerçek bir uygulamada böyle bir yapı tuple değil Struct olarak tanımlanırdı.
+Verilerin fonksiyon dışında kullanılacağı, protocol conformance gibi nedenlerden dolayı tuple yetersiz kalırdı.
+*/
