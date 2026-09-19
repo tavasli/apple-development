@@ -82,3 +82,41 @@ print(firstWorkout < secondWorkout)
 Gerçek bir uygulamada böyle bir yapı tuple değil Struct olarak tanımlanırdı.
 Verilerin fonksiyon dışında kullanılacağı, protocol conformance gibi nedenlerden dolayı tuple yetersiz kalırdı.
 */
+
+// MARK: - Optionals
+
+let weightInput = "88"
+let heightInput = "1.80"
+let stepsInput = "12500"
+// Textfield her zaman String tipinde değer verir.
+
+let steps = Int(stepsInput)
+/*
+print(steps)
+Optional() tipinde bir sonuç getirdi çünkü String içerisi her zaman Int() dönüşümüne uymayabilir.
+*/
+
+if let steps {
+    print("Steps: \(steps)")
+} else {
+    print("Invalid steps input")
+}
+
+if let weight = Double(weightInput), let height = Double(heightInput), height > 0 {
+// Tek satırda dönüşümlerin değerinin optional kontrolü yapılıyor.
+    let bmi = weight / (height * height)
+    print("BMI: \(bmi)")
+} else {
+    print("Invalid weight or height")
+}
+
+let nickname: String? = nil
+print("Welcome, \(nickname ?? name)!")
+
+/*
+Bir değerin okunamaması, yani nil olması, ile 0 arasında fark vardır.
+Sıfır bir değerdir ve o değişkenin bir değeri olduğunu ifade eder.
+nil ise değerin hiç olmadığını belirtir.
+Kullanıcıya bir varsayılan değer göstermek doğru bir yaklaşım değildir.
+Doğru olan kullanıcıya verinin olmadığını doğru biçimde ifade etmektir.
+*/
