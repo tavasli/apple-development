@@ -11,3 +11,5 @@ Packages/
 *.dSYM
 
 structures-and-classes.md
+
+expense-tracker/tracker
