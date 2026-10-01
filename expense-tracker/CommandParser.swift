@@ -7,6 +7,7 @@ enum Command {
     case delete(position: Int)
     case help
     case quit
+    case total
 }
 
 enum CommandError: Error {
@@ -80,6 +81,9 @@ func parse(input: String) throws -> Command {
 
     case "quit":
         return .quit
+    
+    case "total":
+        return .total
 
     default:
         throw CommandError.unknownCommand(String(commandString))
