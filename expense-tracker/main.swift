@@ -1,25 +1,16 @@
 import Foundation
 
-let testInputs = [
-    "add 250,50 food Lunch at work",
-    "add 12 transport Metro",
-    "list",
-    "delete 2",
-    "adfd 250 food Test",
-    "add 250",
-    "add abc food Test",
-    "add 250 spaceship Test",
-    "delete two",
-    ""
-]
+let store = ExpenseStore()
 
-for input in testInputs {
-    do {
-        let command = try parse(input: input)
-        print("OK: \(command)")
-    } catch let error as CommandError {
-        print("ERROR: \(error.message)")
-    } catch {
-        print("UNEXPECTED: \(error)")
-    }
-}
+store.add(Expense(title: "Groceries", amount: 50.0, category: .food))
+store.add(Expense(title: "Movie Tickets", amount: 30.0, category: .entertainment))
+store.add(Expense(title: "Bus Pass", amount: 20.0, category: .transport))
+store.add(Expense(title: "Electricity Bill", amount: 100.0, category: .bills))
+store.add(Expense(title: "Dinner", amount: 60.0, category: .food))
+
+print(report(for: store.allExpenses))
+
+print("")
+
+let store2 = ExpenseStore()
+print(report(for: store2.allExpenses))
