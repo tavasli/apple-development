@@ -11,5 +11,6 @@ Packages/
 *.dSYM
 
 structures-and-classes.md
+properties.md
 
 expense-tracker/tracker
