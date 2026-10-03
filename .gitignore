@@ -10,7 +10,4 @@ Packages/
 *.dSYM.zip
 *.dSYM
 
-structures-and-classes.md
-properties.md
-
 expense-tracker/tracker
