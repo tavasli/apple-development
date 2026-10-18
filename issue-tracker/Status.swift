@@ -1,0 +1,37 @@
+import Foundation
+
+enum Priority: Int, CaseIterable, Codable {
+    case low = 1, medium, high, critical
+}
+
+extension Priority: Comparable {
+    static func < (l: Priority, r: Priority) -> Bool { l.rawValue < r.rawValue }
+}
+
+extension Priority: CustomStringConvertible {
+    var description: String {
+        switch self {
+        case .low: "low"
+        case .medium: "medium"
+        case .high: "high"
+        case .critical: "critical"
+        }
+    }
+}
+
+enum Status: Codable {
+    case open
+    // Associated value ile özel tipte değerler tutacağız.
+    case inProgress(assignee: String)
+    case done(resolvedAt: Date)
+}
+
+extension Status: CustomStringConvertible {
+    var description: String {
+        switch self {
+        case .open: "open"
+        case .inProgress(let assignee): "in progress (\(assignee))"
+        case .done(let resolvedAt): "done \(resolvedAt.formatted(date: .abbreviated, time: .omitted))"
+        }
+    }
+}
