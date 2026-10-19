@@ -35,3 +35,21 @@ extension Status: CustomStringConvertible {
         }
     }
 }
+
+enum Severity: Int, CaseIterable, Codable {
+    case minor = 1, major, blocker
+}
+
+extension Severity: Comparable {
+    static func < (l: Severity, r: Severity) -> Bool { l.rawValue < r.rawValue }
+}
+
+extension Severity: CustomStringConvertible {
+    var description: String {
+        switch self {
+        case .minor: "minor"
+        case .major: "major"
+        case .blocker: "blocker"
+        }
+    }
+}
