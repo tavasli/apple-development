@@ -36,6 +36,20 @@ extension Status: CustomStringConvertible {
     }
 }
 
+extension Status {
+    var kind: StatusKind {
+        switch self {
+        case .open: .open
+        case .inProgress: .inProgress
+        case .done: .done
+        }
+    }
+}
+
+enum StatusKind: String, CaseIterable {
+    case open, inProgress, done
+}
+
 enum Severity: Int, CaseIterable, Codable {
     case minor = 1, major, blocker
 }
