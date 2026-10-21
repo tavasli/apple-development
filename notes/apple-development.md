@@ -1,6 +1,6 @@
 # Swift Başucu Rehberi
 
-Bu rehber, *The Swift Programming Language* kitabının Language Guide bölümlerini kitaptaki sırayla özetler. Amacı, Swift tarafında bir mülakata ya da günlük işe hazırlanırken tek kaynaktan hızlıca tekrar yapabilmektir. Her bölümde temel kurallar, gerçek projelerde karşılaşılan kullanım şekilleri, tercihlerin gerekçeleri ve sık yapılan hatalar yer alır. Bölüm sonlarındaki mülakat sorularının cevapları kapalı gelir. Önce cevabı kendin ver, sonra açıp karşılaştır.
+Bu rehber, *The Swift Programming Language* kitabının Language Guide bölümlerini kitaptaki sırayla özetler. Amacı, Swift tarafında bir mülakata ya da günlük işe hazırlanırken tek kaynaktan hızlıca tekrar yapabilmektir. Her bölümde temel kurallar, gerçek projelerde karşılaşılan kullanım şekilleri, tercihlerin gerekçeleri ve sık yapılan hatalar yer alır. Her bölüm, mülakat soruları ve örnek cevaplarla biter. Markdown önizlemesinde cevaplar kapalı gelir. Önce cevabı kendin ver, sonra açıp karşılaştır.
 
 Kod örnekleri Swift 6 ile derlenmiştir. Her örnekte `import Foundation` satırının bulunduğu varsayılır.
 
