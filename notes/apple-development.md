@@ -1998,3 +1998,741 @@ Bir class'ın alt sınıfının oluşturulmasını ya da bir metodun override ed
 
 SwiftUI'da view'lar, ekranın o anki durumunun hafif bir tarifidir. Durum her değiştiğinde yeniden oluşturulurlar. Struct'lar ucuzdur, inheritance yükü taşımaz ve value semantics sayesinde SwiftUI eski ve yeni tarifi karşılaştırıp sadece değişen kısmı güncelleyebilir. Değişen durum ise view'da değil, `@State` ya da `@Observable` bir model gibi SwiftUI'ın yönettiği depolama alanında tutulur.
 </details>
+
+---
+
+## 10. Properties
+
+Property, bir değeri bir tipe bağlar. Stored property değeri instance'ın içinde saklar. Computed property ise değeri saklamaz, her erişildiğinde hesaplar. Bu ikisinin üzerine property observer'lar, lazy property'ler, property wrapper'lar ve type property'ler gelir.
+
+### Stored properties
+
+Stored property'ler `let` ya da `var` ile tanımlanır. Struct'larda, instance `let` ile tanımlandıysa `var` property'ler bile değiştirilemez.
+
+```swift
+struct Coordinate {
+    var latitude: Double
+    var longitude: Double
+}
+
+let office = Coordinate(latitude: 41.04, longitude: 29.0)
+// office.latitude = 40.0    error: cannot assign to property: 'office' is a 'let' constant
+```
+
+### Lazy stored properties
+
+`lazy` property'nin değeri ilk erişildiğinde hesaplanır. Oluşturulması pahalı olan ya da her instance'ta gerekmeyen değerler için kullanılır. `lazy` sadece `var` olabilir, çünkü değeri init tamamlandıktan sonra atanır.
+
+```swift
+final class ReportExporter {
+    lazy var formatter: DateFormatter = {
+        print("Creating formatter")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    func filename(for date: Date) -> String {
+        "report-\(formatter.string(from: date)).csv"
+    }
+}
+
+let exporter = ReportExporter()
+print("Exporter ready")
+print(exporter.filename(for: Date(timeIntervalSince1970: 0)))
+// Exporter ready
+// Creating formatter
+// report-1970-01-01.csv
+```
+
+Sondaki `()` önemlidir. Closure'ın kendisi değil, closure'ın çalıştırılmasıyla üretilen değer property'ye atanır. Lazy property'nin closure'ı içinde `self`'e erişilebilir, çünkü ilk erişim anında instance zaten tamamen oluşturulmuş olur.
+
+> [!WARNING]
+> `lazy` property thread safe değildir. Birden fazla thread ilk erişimi aynı anda yaparsa değer birden fazla kez oluşturulabilir.
+
+### Computed properties
+
+Computed property bir değer saklamaz. Başka property'lerden türetilen değeri her erişimde hesaplar. Sadece getter'ı olan computed property read-only'dir ve `get` anahtar kelimesi yazılmadan tanımlanabilir.
+
+```swift
+struct Subscription {
+    var monthlyPrice: Decimal
+    var discountRate: Decimal
+
+    var yearlyPrice: Decimal {
+        monthlyPrice * 12 * (1 - discountRate)
+    }
+}
+
+let plan = Subscription(monthlyPrice: 100, discountRate: 0.2)
+print(plan.yearlyPrice)    // 960
+```
+
+Setter'ı olan computed property, kendisine atanan değeri başka bir stored property'ye çevirerek yazar. Setter içinde atanan değer `newValue` adıyla gelir.
+
+```swift
+struct TimeoutSetting {
+    var milliseconds: Int
+
+    var seconds: Double {
+        get { Double(milliseconds) / 1000 }
+        set { milliseconds = Int(newValue * 1000) }
+    }
+}
+
+var timeout = TimeoutSetting(milliseconds: 1500)
+timeout.seconds = 2.5
+print(timeout.milliseconds)    // 2500
+```
+
+> [!IMPORTANT]
+> Birbirinden türetilebilen iki değer varsa sadece biri stored olur, diğeri computed yapılır. Bunun asıl sebebi bellek değil, single source of truth'tur. İkisi de stored olsaydı biri güncellenip diğeri unutulduğunda `milliseconds = 1500` iken `seconds = 2.0` gibi tutarsız bir durum oluşabilirdi. Tek bir kaynak olduğunda bu tutarsızlık imkânsız hale gelir.
+
+> [!WARNING]
+> Computed property bir property'dir, metot değildir. `var summary() -> String` şeklinde bir tanım geçersizdir. Doğru yazım `var summary: String { ... }` şeklindedir ve kullanılırken parantez yazılmaz: `plan.summary`. Hesaplama pahalıysa, parametre alıyorsa ya da yan etkisi varsa computed property yerine metot tercih edilir.
+
+### Property observers
+
+`willSet` ve `didSet`, bir stored property'ye değer atandığında çalışır. `willSet` atama öncesinde çalışır ve yeni değere `newValue` ile erişir. `didSet` atama sonrasında çalışır ve eski değere `oldValue` ile erişir. Değer aynı olsa bile atama yapıldığı için observer'lar çalışır.
+
+```swift
+final class UploadProgress {
+    var onMilestone: ((Int) -> Void)?
+
+    var percent: Int = 0 {
+        didSet {
+            percent = min(max(percent, 0), 100)
+            let previousMilestone = oldValue / 25
+            let currentMilestone = percent / 25
+            if currentMilestone > previousMilestone {
+                onMilestone?(currentMilestone * 25)
+            }
+        }
+    }
+}
+
+let progress = UploadProgress()
+progress.onMilestone = { print("Reached \($0)%") }
+progress.percent = 30     // Reached 25%
+progress.percent = 60     // Reached 50%
+progress.percent = 140    // Reached 100%
+print(progress.percent)   // 100
+```
+
+`didSet` içinde property'nin kendisine tekrar değer atamak observer'ı yeniden tetiklemez. Bu yüzden yukarıdaki sınırlama işlemi sonsuz döngüye girmez.
+
+> [!WARNING]
+> `didSet` içinde yeni değer `newValue` ile değil, property'nin kendi adıyla okunur. `newValue` sadece `willSet` içinde vardır, `oldValue` ise sadece `didSet` içinde. Bir eşiğin geçildiğini anlamak için `oldValue` ile yeni değer birlikte karşılaştırılır.
+
+> [!NOTE]
+> Observer'lar initializer içindeki ilk atamada çalışmaz. Sadece instance oluşturulduktan sonraki atamalarda tetiklenir.
+
+### Property wrappers
+
+Property wrapper, bir property'nin nasıl saklanacağını ya da hangi kurallara uyacağını tanımlayan mantığı tekrar kullanılabilir hale getirir. Tip `@propertyWrapper` ile işaretlenir ve `wrappedValue` adında bir property içermek zorundadır. Başlangıç değeri verilebilmesi için `init(wrappedValue:)` yazılır.
+
+```swift
+@propertyWrapper
+struct Clamped {
+    private var value: Int
+    private let range: ClosedRange<Int>
+
+    init(wrappedValue: Int, _ range: ClosedRange<Int>) {
+        self.range = range
+        self.value = min(max(wrappedValue, range.lowerBound), range.upperBound)
+    }
+
+    var wrappedValue: Int {
+        get { value }
+        set { value = min(max(newValue, range.lowerBound), range.upperBound) }
+    }
+}
+
+struct VideoSettings {
+    @Clamped(0...100) var volume = 50
+    @Clamped(1...4) var playbackSpeed = 1
+}
+
+var settings = VideoSettings()
+settings.volume = 150
+print(settings.volume)    // 100
+```
+
+Bir wrapper `projectedValue` tanımlarsa, bu değere property adının başına `$` eklenerek erişilir. SwiftUI'da `@State var isOn` için `$isOn` yazıldığında elde edilen `Binding` bir projected value'dur.
+
+> [!NOTE]
+> SwiftUI'daki `@State`, `@Binding`, `@Environment`, `@AppStorage` ve `@Query` property wrapper'dır. `@AppStorage("theme") var theme = "system"` gibi bir tanım, değeri `UserDefaults`'ta saklayan ve değiştiğinde view'ı güncelleyen bir wrapper kullanır. Kendi wrapper'ını yazmayı bilmek, bu araçların perde arkasını anlamayı sağlar.
+
+### Type properties
+
+`static` ile tanımlanan property'ler instance'a değil tipin kendisine aittir. Tüm instance'lar için tek bir değer vardır. Stored type property'ler lazy olarak, ilk erişimde ve thread safe şekilde başlatılır.
+
+```swift
+@MainActor
+struct FeatureFlags {
+    static let defaultFlags: Set<String> = ["newOnboarding"]
+    static var overrides: [String: Bool] = [:]
+
+    static func isEnabled(_ flag: String) -> Bool {
+        overrides[flag] ?? defaultFlags.contains(flag)
+    }
+}
+
+print(FeatureFlags.isEnabled("newOnboarding"))    // true
+```
+
+Class'larda computed type property'ler `static` yerine `class` ile tanımlanırsa alt sınıflar tarafından override edilebilir.
+
+> [!WARNING]
+> Swift 6 dil modunda değişebilen bir `static var`, her thread'den erişilebilen paylaşılmış bir durum olduğu için derleyici hata verir: `static property 'overrides' is not concurrency-safe`. Çözüm, durumu tek bir actor'a bağlamak ya da değeri `let` yapmaktır. Yukarıdaki örnekte tip `@MainActor` ile işaretlendi, böylece `overrides`'a sadece main thread'den erişilebilir (bkz. [Concurrency](#18-concurrency)).
+
+### Mülakat soruları
+
+<details>
+<summary><b>Stored property ile computed property arasındaki fark ne, birbirinden türetilebilen iki değerde hangisini seçersin?</b></summary>
+
+Stored property değeri instance'ın içinde saklar. Computed property ise hiçbir şey saklamaz, her erişimde değeri başka property'lerden hesaplar. Birbirinden türetilebilen iki değerde birini stored, diğerini computed yaparım. Sebebi single source of truth'tur. Tek bir stored değer olduğunda ikisinin birbiriyle tutarsız hale gelmesi imkânsız olur.
+</details>
+
+<details>
+<summary><b>lazy property nedir, neden let olamaz?</b></summary>
+
+Değeri ilk erişildiğinde hesaplanan stored property'dir. Oluşturulması pahalı ya da her zaman gerekmeyen değerler için kullanılır. `let` olamaz çünkü Swift'te `let` property'lerin initialization tamamlanmadan önce değer almış olması gerekir. Lazy property'nin değeri ise initialization'dan sonra, ilk erişimde atanır.
+</details>
+
+<details>
+<summary><b>willSet ve didSet ne zaman çalışır, init içinde çalışırlar mı?</b></summary>
+
+`willSet` değer atanmadan hemen önce çalışır ve yeni değere `newValue` ile erişir. `didSet` atamadan hemen sonra çalışır ve eski değere `oldValue` ile erişir. Initializer içindeki ilk atamalarda çalışmazlar, sadece instance oluşturulduktan sonraki atamalarda tetiklenirler.
+</details>
+
+<details>
+<summary><b>Property wrapper nedir? SwiftUI'daki @State ile bağlantısı ne?</b></summary>
+
+Property'nin nasıl saklanacağını ya da değerine hangi kuralların uygulanacağını tanımlayan mantığı tekrar kullanılabilir bir tipe taşır. Tip `@propertyWrapper` ile işaretlenir ve `wrappedValue` sağlar. `@State` da bir property wrapper'dır. Değeri view struct'ının içinde değil SwiftUI'ın yönettiği bir depolama alanında tutar, değer değiştiğinde view'ın yeniden çizilmesini tetikler. `$isOn` yazıldığında elde edilen `Binding`, wrapper'ın `projectedValue`'sudur.
+</details>
+
+<details>
+<summary><b>static ile class anahtar kelimeleri type property ve metotlarda nasıl farklıdır?</b></summary>
+
+İkisi de üyeyi instance'a değil tipe bağlar. `static` ile tanımlanan üye alt sınıflarda override edilemez. `class` ile tanımlanan üye ise override edilebilir. `class` sadece class'larda ve sadece computed property'ler ile metotlarda kullanılabilir.
+</details>
+
+---
+
+## 11. Methods
+
+Metot, belirli bir tipe bağlı fonksiyondur. Instance metotları bir instance üzerinde, type metotları tipin kendisi üzerinde çağrılır. Swift'te struct ve enum'lar da metot tanımlayabilir. Bu, Objective-C'den önemli bir farktır.
+
+### Instance methods ve self
+
+Her instance'ın, instance'ın kendisini gösteren örtük bir `self` property'si vardır. Çoğu zaman yazılması gerekmez. Parametre adı bir property ile aynı olduğunda ayırt etmek için yazılır.
+
+```swift
+struct Pagination {
+    var page = 1
+    var pageSize = 20
+
+    func offset() -> Int {
+        (page - 1) * pageSize
+    }
+
+    func with(pageSize: Int) -> Pagination {
+        var copy = self
+        copy.pageSize = pageSize
+        return copy
+    }
+}
+
+let pagination = Pagination(page: 3)
+print(pagination.offset())                       // 40
+print(pagination.with(pageSize: 50).offset())    // 100
+```
+
+### mutating
+
+Value type'larda instance metotları varsayılan olarak property'leri değiştiremez. Değişiklik yapacak metot `mutating` olarak işaretlenir. `mutating` metot `self`'e tamamen yeni bir değer de atayabilir.
+
+```swift
+struct ShoppingCart {
+    private(set) var items: [String: Int] = [:]
+
+    mutating func add(_ sku: String, quantity: Int = 1) {
+        items[sku, default: 0] += quantity
+    }
+
+    mutating func clear() {
+        self = ShoppingCart()
+    }
+}
+
+var cart = ShoppingCart()
+cart.add("KB-01")
+cart.add("KB-01", quantity: 2)
+print(cart.items["KB-01"] ?? 0)    // 3
+cart.clear()
+print(cart.items.isEmpty)          // true
+```
+
+> [!WARNING]
+> `mutating` bir metot `let` ile tanımlanmış bir struct üzerinde çağrılamaz. `let cart = ShoppingCart()` dedikten sonra `cart.add("KB-01")` yazmak derlenmez. Instance'ın değişmesi gerekiyorsa `var` ile tanımlanır.
+
+> [!NOTE]
+> Class'larda `mutating` yoktur. Class metotları property'leri her zaman değiştirebilir, çünkü değiştirilen şey referansın gösterdiği nesnedir, referansın kendisi değil.
+
+### Type methods
+
+`static func` ile tanımlanan metotlar tipin kendisi üzerinde çağrılır. Factory metotları, ortak yardımcılar ve önceden hazırlanmış örnekler için kullanılır. Type metodunun içinde `self`, instance'ı değil tipin kendisini gösterir.
+
+```swift
+struct Money {
+    let amount: Decimal
+    let currency: String
+
+    static func zero(in currency: String) -> Money {
+        Money(amount: 0, currency: currency)
+    }
+
+    static func parse(_ text: String) -> Money? {
+        let parts = text.split(separator: " ")
+        guard parts.count == 2, let amount = Decimal(string: String(parts[0])) else { return nil }
+        return Money(amount: amount, currency: String(parts[1]))
+    }
+}
+
+print(Money.parse("49.90 TRY")?.amount ?? 0)    // 49.9
+print(Money.zero(in: "EUR").currency)           // EUR
+```
+
+### Mülakat soruları
+
+<details>
+<summary><b>mutating anahtar kelimesi neden var, class'larda neden yok?</b></summary>
+
+Struct ve enum value type'tır ve instance'ın property'leri değerin kendisinin bir parçasıdır. Bir property'yi değiştirmek değerin kendisini değiştirmek demektir. Swift bunun açıkça belirtilmesini ister ve `let` ile tanımlanmış bir instance üzerinde `mutating` metot çağrılmasını engeller. Class'ta değiştirilen şey referansın gösterdiği nesnedir, referansın kendisi değişmez. Bu yüzden `mutating`'e gerek yoktur.
+</details>
+
+<details>
+<summary><b>Bir mutating metot içinde self'e yeni değer atamak mümkün mü?</b></summary>
+
+Evet. `mutating` metot içinde `self = ShoppingCart()` gibi bir atama yapılabilir ve instance tamamen yeni bir değerle değiştirilir. Enum'larda bu yöntem durum geçişlerini yazmak için sık kullanılır, örneğin `self = .paused`.
+</details>
+
+---
+
+## 12. Subscripts
+
+Subscript, bir tipin elemanlarına köşeli parantez ile erişilmesini sağlar. `array[0]` ve `dictionary["key"]` subscript kullanır. Kendi tiplerinde de subscript tanımlanabilir. Bir subscript birden fazla parametre alabilir, read-only olabilir ve farklı parametre tipleriyle overload edilebilir.
+
+```swift
+struct HTTPHeaders {
+    private var storage: [String: String] = [:]
+
+    subscript(name: String) -> String? {
+        get { storage[name.lowercased()] }
+        set { storage[name.lowercased()] = newValue }
+    }
+}
+
+var headers = HTTPHeaders()
+headers["Content-Type"] = "application/json"
+print(headers["content-type"] ?? "missing")    // application/json
+```
+
+Bu örnekte subscript, başlık isimlerini büyük küçük harfe duyarsız hale getiriyor. Dışarıdan bakıldığında sıradan bir sözlük gibi kullanılıyor ama kuralı tip kendisi uyguluyor.
+
+> [!WARNING]
+> Subscript parametreleri, fonksiyonlardan farklı olarak varsayılan olarak argument label almaz. Yukarıdaki subscript `headers[name: "..."]` şeklinde değil `headers["..."]` şeklinde çağrılır. Label istenirse parametreye açıkça iki isim verilir: `subscript(row row: Int) -> ...`.
+
+Birden fazla parametreli subscript, iki boyutlu yapılar için kullanılır.
+
+```swift
+struct SeatMap {
+    let rows: Int
+    let columns: Int
+    private var reserved: [Bool]
+
+    init(rows: Int, columns: Int) {
+        self.rows = rows
+        self.columns = columns
+        reserved = Array(repeating: false, count: rows * columns)
+    }
+
+    subscript(row: Int, column: Int) -> Bool {
+        get {
+            precondition(row < rows && column < columns, "Seat out of range")
+            return reserved[row * columns + column]
+        }
+        set {
+            precondition(row < rows && column < columns, "Seat out of range")
+            reserved[row * columns + column] = newValue
+        }
+    }
+}
+
+var hall = SeatMap(rows: 10, columns: 12)
+hall[2, 5] = true
+print(hall[2, 5])    // true
+```
+
+Dizilerde index dışına çıkmak crash'e yol açar. Güvenli erişim için yaygın bir yöntem, label'lı bir subscript'i extension ile eklemektir.
+
+```swift
+extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
+let tabs = ["Home", "Search", "Profile"]
+print(tabs[safe: 1] ?? "none")    // Search
+print(tabs[safe: 7] ?? "none")    // none
+```
+
+`static subscript` ile tipin kendisi üzerinde çalışan subscript'ler de tanımlanabilir.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Subscript nedir, kendi tipinde ne zaman tanımlarsın?</b></summary>
+
+Bir tipin elemanlarına köşeli parantez ile erişmeyi sağlayan özel bir üyedir. Tip doğal olarak bir koleksiyon ya da tablo gibi davranıyorsa tanımlarım. Örneğin büyük küçük harfe duyarsız bir header kabı ya da satır ve sütunla erişilen bir koltuk haritası. Erişim kuralını (normalize etme, sınır kontrolü) tipin içine gömmüş olurum.
+</details>
+
+<details>
+<summary><b>Diziye güvenli index erişimi nasıl eklersin?</b></summary>
+
+`Collection`'a extension ile `subscript(safe index: Index) -> Element?` eklerim. Index `indices` içindeyse elemanı, değilse `nil` döndürür. Label kullanmak hem normal subscript ile çakışmayı önler hem de çağrı noktasında güvenli erişim yapıldığını açıkça gösterir.
+</details>
+
+---
+
+## 13. Inheritance
+
+Bir class, başka bir class'ın property, metot ve subscript'lerini miras alabilir. Miras veren class superclass, alan class subclass olarak adlandırılır. Inheritance sadece class'larda vardır. Swift'te çoklu inheritance yoktur. Bir class sadece tek bir class'tan türeyebilir ama birden fazla protokole uyabilir.
+
+### Subclassing ve override
+
+Subclass, miras aldığı bir üyeyi yeniden tanımlamak için `override` yazmak zorundadır. Bu zorunluluk, yanlışlıkla aynı isimde bir metot tanımlayıp üst sınıfınkini ezmeyi engeller. Üst sınıfın implementasyonuna `super` ile erişilir.
+
+```swift
+class APIClient {
+    let baseURL: String
+
+    init(baseURL: String) {
+        self.baseURL = baseURL
+    }
+
+    func headers() -> [String: String] {
+        ["Accept": "application/json"]
+    }
+
+    func describe() -> String {
+        "Client for \(baseURL) with \(headers().count) headers"
+    }
+}
+
+final class AuthenticatedAPIClient: APIClient {
+    let token: String
+
+    init(baseURL: String, token: String) {
+        self.token = token
+        super.init(baseURL: baseURL)
+    }
+
+    override func headers() -> [String: String] {
+        var headers = super.headers()
+        headers["Authorization"] = "Bearer \(token)"
+        return headers
+    }
+}
+
+let client: APIClient = AuthenticatedAPIClient(baseURL: "https://api.example.com", token: "abc")
+print(client.describe())    // Client for https://api.example.com with 2 headers
+```
+
+`client` değişkeninin tipi `APIClient` olmasına rağmen `describe()` içindeki `headers()` çağrısı subclass'ın implementasyonunu çalıştırır. Hangi implementasyonun çalışacağı çalışma anında, nesnenin gerçek tipine göre belirlenir (dynamic dispatch).
+
+### Property override
+
+Subclass, miras aldığı bir property'ye getter ve setter ekleyebilir ya da property observer ekleyebilir. Stored property'nin kendisi override edilemez, ama computed bir property ile ezilebilir ya da üzerine `didSet` eklenebilir.
+
+```swift
+class Control {
+    var isEnabled = true
+}
+
+final class SubmitButton: Control {
+    private(set) var renderCount = 0
+
+    override var isEnabled: Bool {
+        didSet { renderCount += 1 }
+    }
+}
+
+let button = SubmitButton()
+button.isEnabled = false
+print(button.renderCount)    // 1
+```
+
+### final
+
+`final` olarak işaretlenen class'tan türetilemez. `final` olarak işaretlenen metot, property ya da subscript override edilemez. Türetme için tasarlanmamış her class'ın `final` olarak işaretlenmesi iyi bir alışkanlıktır.
+
+> [!TIP]
+> Inheritance mı, protokol mü? Swift'te kod paylaşımı ve soyutlama için ilk tercih protokol ve protocol extension'dır. Struct'lar da kullanabilir, bir tip birden fazla protokole uyabilir ve sıkı bir hiyerarşi oluşmaz. Inheritance genellikle UIKit gibi class tabanlı framework'lerle çalışırken (`UIViewController`, `UIView` subclass'ları) ya da ortak durumu ve kimliği olan gerçek bir "is a" ilişkisi olduğunda kullanılır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Swift'te override neden zorunlu bir anahtar kelime?</b></summary>
+
+Yanlışlıkla üst sınıftaki bir metotla aynı imzada bir metot yazıp onu ezmeyi engellemek için. Ayrıca `override` yazılıp üst sınıfta eşleşen bir üye yoksa derleyici hata verir. Böylece üst sınıftaki metodun adı değiştiğinde alt sınıftaki override sessizce bağımsız bir metoda dönüşmez.
+</details>
+
+<details>
+<summary><b>Swift çoklu inheritance destekler mi? Desteklemiyorsa ne kullanırsın?</b></summary>
+
+Class'lar için desteklemez, bir class sadece bir class'tan türeyebilir. Ancak bir tip birden fazla protokole uyabilir ve protocol extension'lar varsayılan implementasyon sağlayabilir. Bu yaklaşım çoklu inheritance'ın faydalarını, karmaşık hiyerarşi ve elmas problemi gibi sorunlar olmadan sağlar.
+</details>
+
+<details>
+<summary><b>Dynamic dispatch nedir?</b></summary>
+
+Çağrılacak metodun derleme anında değil, çalışma anında nesnenin gerçek tipine bakılarak seçilmesidir. Bir `APIClient` değişkeni aslında bir `AuthenticatedAPIClient` gösteriyorsa, override edilmiş metot çalışır. Class'larda bu işlem bir metot tablosu (vtable) üzerinden yapılır. `final` ya da struct kullanıldığında derleyici hangi metodun çalışacağını önceden bildiği için doğrudan çağrı (static dispatch) yapabilir.
+</details>
+
+---
+
+## 14. Initialization
+
+Initialization, bir instance'ı kullanıma hazırlama sürecidir. Swift'in temel kuralı şudur: initializer bittiğinde her stored property'nin bir değeri olmalıdır. Optional property'ler otomatik olarak `nil` ile başlar. Diğer tüm property'lere ya tanımda varsayılan değer verilir ya da initializer içinde değer atanır.
+
+### Varsayılan değerler ve özel initializer'lar
+
+Bir property her zaman aynı başlangıç değerini alıyorsa bu değer tanımda verilir. Initializer'da sadece dışarıdan gelmesi gereken değerler atanır.
+
+```swift
+struct RetryPolicy {
+    let maxAttempts: Int
+    let baseDelay: TimeInterval
+    var attemptsMade = 0
+
+    init(maxAttempts: Int = 3, baseDelay: TimeInterval = 0.5) {
+        self.maxAttempts = maxAttempts
+        self.baseDelay = baseDelay
+    }
+}
+```
+
+`let` property'lere initializer içinde değer atanabilir. Initialization bittikten sonra değiştirilemezler.
+
+### Struct'larda memberwise initializer
+
+Struct'lar, stored property'lerin hepsini parametre olarak alan memberwise initializer'ı otomatik alır. Struct'ın içinde özel bir `init` yazıldığında bu initializer kaybolur. İkisini birlikte tutmak için özel `init` bir extension içine yazılır.
+
+```swift
+struct Location {
+    let latitude: Double
+    let longitude: Double
+}
+
+extension Location {
+    init?(text: String) {
+        let parts = text.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2 else { return nil }
+        self.init(latitude: parts[0], longitude: parts[1])
+    }
+}
+
+let a = Location(latitude: 41.0, longitude: 29.0)    // memberwise init hâlâ kullanılabilir
+let b = Location(text: "41.0, 29.0")
+print(b?.latitude ?? 0)    // 41.0
+```
+
+### Initializer delegation
+
+Bir initializer işin bir kısmını aynı tipin başka bir initializer'ına devredebilir. Value type'larda bu `self.init(...)` ile yapılır. Yukarıdaki `init?(text:)` memberwise initializer'a delegate ediyor.
+
+### Failable initializers
+
+Geçersiz girdiyle instance oluşturmanın anlamsız olduğu durumlarda `init?` kullanılır. Başarısız olursa `return nil` yapılır ve sonuç optional olur. Raw value'lu enum'ların `init?(rawValue:)`'su ve `Int("abc")` failable initializer örnekleridir.
+
+```swift
+struct EmailAddress {
+    let value: String
+
+    init?(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.contains("@"), !trimmed.hasPrefix("@"), !trimmed.hasSuffix("@") else {
+            return nil
+        }
+        value = trimmed
+    }
+}
+
+print(EmailAddress("  Ada@Example.com ")?.value ?? "invalid")    // ada@example.com
+print(EmailAddress("not-an-email")?.value ?? "invalid")          // invalid
+```
+
+> [!TIP]
+> Failable init mi, throwing init mi? Başarısızlığın tek bir anlamı varsa ("geçersiz girdi") `init?` yeterlidir. Çağıranın başarısızlığın nedenini bilmesi gerekiyorsa (kullanıcıya hangi kuralın ihlal edildiğini göstermek gibi) `init(...) throws` kullanılır.
+
+Bu tip, geçerli bir e-posta adresi taşıdığını tipin kendisiyle garanti eder. Uygulamanın geri kalanında `String` yerine `EmailAddress` kullanıldığında doğrulamanın tekrar tekrar yapılmasına gerek kalmaz.
+
+### Class'larda designated ve convenience initializer'lar
+
+Class'larda inheritance olduğu için initialization daha katıdır. İki tür initializer vardır:
+
+- **Designated initializer**: class'ın ana initializer'ıdır. Class'ın kendi property'lerinin hepsini başlatır, sonra superclass'ın bir designated initializer'ını çağırır.
+- **Convenience initializer**: `convenience` ile işaretlenir. Mutlaka aynı class'ın başka bir initializer'ını çağırır. Sık kullanılan bir yapılandırmayı kısaltmak için kullanılır.
+
+Kural üç cümleyle özetlenir. Designated initializer superclass'ın designated initializer'ını çağırır. Convenience initializer aynı class'ın başka bir initializer'ını çağırır. Convenience initializer'ın zinciri sonunda mutlaka bir designated initializer'a ulaşır.
+
+```swift
+class NetworkSession {
+    let timeout: TimeInterval
+    let maxConnections: Int
+
+    init(timeout: TimeInterval, maxConnections: Int) {
+        self.timeout = timeout
+        self.maxConnections = maxConnections
+    }
+
+    convenience init() {
+        self.init(timeout: 30, maxConnections: 6)
+    }
+}
+
+final class UploadSession: NetworkSession {
+    let chunkSize: Int
+
+    init(chunkSize: Int) {
+        self.chunkSize = chunkSize                          // 1. aşama: önce kendi property'leri
+        super.init(timeout: 120, maxConnections: 2)         // sonra superclass
+        print("Upload session ready: \(describe())")        // 2. aşama: artık self kullanılabilir
+    }
+
+    func describe() -> String {
+        "\(chunkSize) bytes per chunk, timeout \(timeout)s"
+    }
+}
+
+let upload = UploadSession(chunkSize: 512_000)
+// Upload session ready: 512000 bytes per chunk, timeout 120.0s
+```
+
+### Two phase initialization
+
+Class initialization iki aşamada gerçekleşir. Birinci aşamada her class, hiyerarşide aşağıdan yukarıya doğru kendi stored property'lerine değer atar. Bu aşama bitmeden `self` üzerinde metot çağrılamaz ve property okunamaz. Tüm property'ler değer aldıktan sonra ikinci aşama başlar. Bu aşamada her class, yukarıdan aşağıya doğru instance'ı özelleştirebilir, metot çağırabilir ve `self`'i kullanabilir.
+
+> [!IMPORTANT]
+> Subclass initializer'ında kendi property'lerine `super.init` çağrısından önce değer atanır. Objective-C'de ve birçok dilde sıra terstir. Swift bu sırayı, superclass'ın initializer'ı override edilmiş bir metodu çağırdığında subclass'ın henüz başlatılmamış bir property'ye erişmesini engellemek için zorunlu tutar.
+
+### required initializers
+
+`required` ile işaretlenen initializer'ı tüm subclass'lar implemente etmek zorundadır. UIKit'te `UIView` ya da `UIViewController` subclass'ı kendi designated initializer'ını tanımladığında `required init?(coder:)` yazmak bu yüzden zorunludur. Storyboard kullanılmıyorsa bu metot genellikle `fatalError("init(coder:) has not been implemented")` ile doldurulur.
+
+### Varsayılan değeri closure ile vermek
+
+Bir property'nin başlangıç değeri birkaç adımda hazırlanıyorsa, değer bir closure'ın çalıştırılmasıyla verilebilir. Closure'ın sonundaki `()` onu hemen çalıştırır. Bu closure instance henüz hazır olmadan çalıştığı için içinde `self` kullanılamaz.
+
+```swift
+struct CheckoutScreen {
+    let currencyFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "TRY"
+        return formatter
+    }()
+}
+```
+
+### Mülakat soruları
+
+<details>
+<summary><b>Designated ve convenience initializer arasındaki fark ne?</b></summary>
+
+Designated initializer class'ın ana initializer'ıdır. Class'ın tüm stored property'lerini başlatır ve superclass'ın designated initializer'ını çağırır. Convenience initializer ise ikincil bir kısayoldur ve mutlaka aynı class'ın başka bir initializer'ını çağırır. Zincir sonunda her zaman bir designated initializer'a ulaşır. Böylece property'lerin başlatılması tek bir yerde toplanmış olur.
+</details>
+
+<details>
+<summary><b>Two phase initialization nedir, neden var?</b></summary>
+
+Birinci aşamada her class aşağıdan yukarıya doğru kendi stored property'lerine değer atar, bu aşamada `self` kullanılamaz. Tüm property'ler değer aldıktan sonra ikinci aşamada `self` kullanılabilir hale gelir ve metot çağrılabilir. Amaç, hiçbir kodun başlatılmamış bir property'ye erişmemesini garanti etmektir. Özellikle superclass initializer'ı override edilmiş bir metot çağırdığında, subclass'ın property'leri zaten hazır olmuş olur.
+</details>
+
+<details>
+<summary><b>Struct'a özel bir init yazınca memberwise init kaybolur. Hem özel init hem de memberwise init nasıl tutulur?</b></summary>
+
+Özel initializer'ı struct'ın gövdesine değil bir extension'a yazarak. Extension'daki initializer'lar memberwise initializer'ın oluşturulmasını engellemez.
+</details>
+
+<details>
+<summary><b>Failable initializer ne zaman, throwing initializer ne zaman?</b></summary>
+
+Başarısızlığın tek bir anlamı varsa ve nedeni önemli değilse failable (`init?`) kullanırım, örneğin geçersiz bir string'den `EmailAddress` oluşturmak. Çağıranın neden başarısız olduğunu bilmesi ve buna göre farklı davranması gerekiyorsa `throws` kullanırım. Örneğin bir formda hangi alanın hangi kuralı ihlal ettiğini göstermek.
+</details>
+
+<details>
+<summary><b>UIViewController subclass'ında neden required init?(coder:) yazmak zorundayız?</b></summary>
+
+`init?(coder:)`, `NSCoding` protokolünden gelen `required` bir initializer'dır ve storyboard ya da xib'den nesne oluşturulurken kullanılır. Subclass kendi designated initializer'ını tanımladığında superclass'ın initializer'larını otomatik miras almayı bırakır. `required` olan bu initializer'ın ise her subclass'ta bulunması zorunludur. Storyboard kullanılmıyorsa `fatalError` ile implemente edilir.
+</details>
+
+---
+
+## 15. Deinitialization
+
+Deinitializer, bir class instance'ı bellekten silinmeden hemen önce çalışır. Sadece class'larda vardır ve `deinit` anahtar kelimesiyle, parametresiz ve parantezsiz tanımlanır. Elle çağrılamaz, ARC tarafından otomatik çağrılır. Subclass'ın `deinit`'i bittikten sonra superclass'ınki otomatik olarak çalışır.
+
+Swift belleği otomatik yönettiği için `deinit`'e çoğu zaman gerek yoktur. Kullanıldığı durumlar, ARC'ın bilmediği kaynakların bırakılmasıdır: bir observer kaydını kaldırmak, bir timer'ı durdurmak, açık bir dosyayı ya da bağlantıyı kapatmak.
+
+```swift
+final class LiveScoreSubscription {
+    let matchID: Int
+
+    init(matchID: Int) {
+        self.matchID = matchID
+        print("Subscribed to match \(matchID)")
+    }
+
+    deinit {
+        print("Unsubscribed from match \(matchID)")
+    }
+}
+
+func showMatchScreen() {
+    let subscription = LiveScoreSubscription(matchID: 7)
+    print("Showing match \(subscription.matchID)")
+}
+
+showMatchScreen()
+print("Back to home")
+// Subscribed to match 7
+// Showing match 7
+// Unsubscribed from match 7
+// Back to home
+```
+
+`subscription` sadece fonksiyonun içinde tutulduğu için fonksiyon bittiğinde referans sayısı sıfıra düşer ve `deinit` hemen çalışır.
+
+> [!TIP]
+> `deinit` içine bir `print` koymak, bir ekranın kapandıktan sonra gerçekten bellekten silinip silinmediğini anlamanın en hızlı yoludur. Ekran kapandığı halde mesaj görünmüyorsa büyük ihtimalle bir retain cycle vardır (bkz. [Automatic Reference Counting](#26-automatic-reference-counting)).
+
+> [!NOTE]
+> Global ya da top level bir değişkende tutulan nesneler program bitene kadar yaşar ve `deinit` mesajları görünmeyebilir. `deinit`'i denerken nesneyi bir fonksiyonun içinde oluşturmak ya da optional bir değişkene atayıp sonra `nil` yapmak gerekir.
+
+### Mülakat soruları
+
+<details>
+<summary><b>deinit ne zaman çalışır? Struct'larda neden yok?</b></summary>
+
+Bir class instance'ına olan güçlü referans sayısı sıfıra düştüğünde, nesne bellekten silinmeden hemen önce ARC tarafından çağrılır. Struct'lar value type'tır. Referans sayılmaz ve her kopya bağımsızdır. "Son kopya ne zaman yok oldu" gibi anlamlı bir an olmadığı için `deinit`'leri yoktur.
+</details>
+
+<details>
+<summary><b>deinit'te ne tür işler yapılır?</b></summary>
+
+ARC'ın otomatik olarak bırakamadığı kaynaklar temizlenir: `NotificationCenter` observer'larını kaldırmak, bir `Timer`'ı geçersiz kılmak, dosya ya da soket bağlantısını kapatmak, bir aboneliği iptal etmek. Ayrıca debug sırasında bir nesnenin bellekten silinip silinmediğini kontrol etmek için log yazılır.
+</details>
