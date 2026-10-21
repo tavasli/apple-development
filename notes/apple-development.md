@@ -862,3 +862,1139 @@ Verilen anahtarın sözlükte olup olmadığı derleme anında bilinemez. Swift,
 
 Dizide `contains` O(n)'dir. Dış döngüyle birlikte toplam maliyet O(n × m) olur. İçerde aranan diziyi bir kez `Set`'e çeviririm. Böylece her `contains` O(1) olur ve toplam maliyet O(n + m)'ye iner.
 </details>
+
+---
+
+## 5. Control Flow
+
+Swift'te akış kontrolü C'ye benzer ama daha güvenlidir. `switch` tüm durumları kapsamak zorundadır, case'ler arasında örtük geçiş (implicit fallthrough) yoktur. `if` ve `switch` değer üreten ifadeler olarak da kullanılabilir.
+
+### for-in
+
+`for-in` diziler, range'ler, sözlükler ve `Sequence` protokolüne uyan her tip üzerinde çalışır. Döngüye `where` ile filtre eklenebilir.
+
+```swift
+struct Member {
+    let name: String
+    let isActive: Bool
+}
+
+let members = [Member(name: "Ada", isActive: true), Member(name: "Linus", isActive: false)]
+
+for member in members where member.isActive {
+    print("Sending invite to \(member.name)")
+}
+```
+
+Belirli adımlarla ilerlemek için `stride` kullanılır. Aşağıdaki örnek bir listeyi sabit boyutlu parçalar halinde işler. Toplu yükleme ya da API'nin tek seferde kabul ettiği kayıt sınırı gibi durumlarda bu kalıp sık görülür.
+
+```swift
+let photoIDs = Array(1...10)
+let batchSize = 4
+
+for start in stride(from: 0, to: photoIDs.count, by: batchSize) {
+    let end = min(start + batchSize, photoIDs.count)
+    print("Uploading \(Array(photoIDs[start..<end]))")
+}
+// Uploading [1, 2, 3, 4]
+// Uploading [5, 6, 7, 8]
+// Uploading [9, 10]
+```
+
+`stride(from:to:by:)` bitiş değerini dahil etmez, `stride(from:through:by:)` dahil eder.
+
+İki diziyi eleman eleman eşleştirmek için `zip`, sıra numarası ile birlikte dolaşmak için `enumerated()` kullanılır.
+
+```swift
+let fields = ["email", "password"]
+let messages = ["Invalid format", "Too short"]
+
+for (field, message) in zip(fields, messages) {
+    print("\(field): \(message)")
+}
+
+for (offset, field) in fields.enumerated() {
+    print("\(offset + 1). \(field)")
+}
+```
+
+> [!WARNING]
+> `enumerated()` index değil sıra numarası (offset) üretir ve her zaman sıfırdan başlar. Bir `ArraySlice` üzerinde bu sayı ile subscript yapmak yanlış elemana ya da crash'e götürür. Gerçek index lazımsa `zip(slice.indices, slice)` kullanılır.
+
+Optional elemanlardan oluşan bir dizide sadece dolu olanları dolaşmak için `for case let` kalıbı kullanılır.
+
+```swift
+let avatarURLs: [String?] = ["a.png", nil, "c.png"]
+
+for case let url? in avatarURLs {
+    print("Prefetching \(url)")
+}
+```
+
+### while ve repeat-while
+
+Kaç kez döneceği önceden bilinmeyen döngülerde `while` kullanılır. Koşul her turun başında kontrol edilir.
+
+```swift
+var attempt = 0
+var delay = 0.5
+let maxAttempts = 4
+
+while attempt < maxAttempts {
+    attempt += 1
+    print("Attempt \(attempt), next delay \(delay)s")
+    delay *= 2
+}
+```
+
+`repeat-while` gövdeyi en az bir kez çalıştırır, koşulu turun sonunda kontrol eder. Cursor tabanlı sayfalamada ilk sayfa her zaman istendiği için doğal bir seçimdir.
+
+```swift
+func fetchPage(after cursor: Int?) -> (items: [String], nextCursor: Int?) {
+    switch cursor {
+    case nil: return (["a", "b"], 2)
+    case 2?: return (["c", "d"], 4)
+    default: return (["e"], nil)
+    }
+}
+
+var cursor: Int? = nil
+var allItems: [String] = []
+
+repeat {
+    let page = fetchPage(after: cursor)
+    allItems += page.items
+    cursor = page.nextCursor
+} while cursor != nil
+
+print(allItems)    // ["a", "b", "c", "d", "e"]
+```
+
+### if
+
+Swift 5.9'dan itibaren `if` ve `switch` bir değer üreten ifade (expression) olarak kullanılabilir. Her dal tek bir ifade içermeli ve tüm dallar aynı tipte değer üretmelidir. Bu kullanım, sadece atama yapmak için `var` tanımlayıp sonra dallarda doldurmanın önüne geçer.
+
+```swift
+let itemCount = 3
+let subtitle = if itemCount == 0 { "Your cart is empty" } else { "\(itemCount) items in cart" }
+print(subtitle)
+```
+
+### switch
+
+`switch`, bir değeri sırayla case'lerle karşılaştırır ve eşleşen ilk case'i çalıştırır. Swift'teki `switch` C'dekinden çok daha güçlüdür:
+
+- Tüm olası değerler kapsanmalıdır (exhaustive). Kapsanmayan durum varsa kod derlenmez.
+- Bir case bittiğinde bir sonrakine geçilmez, `break` yazmaya gerek yoktur.
+- Bir case'te birden fazla değer virgülle yazılabilir.
+- Range, tuple, enum case'i, tip kontrolü gibi pattern'ler kullanılabilir.
+
+```swift
+func category(for statusCode: Int) -> String {
+    switch statusCode {
+    case 200..<300: "Success"
+    case 401, 403: "Authorization"
+    case 429: "Rate limited"
+    case 400..<500: "Client error"
+    case 500...: "Server error"
+    default: "Unexpected"
+    }
+}
+
+print(category(for: 403))    // Authorization
+print(category(for: 404))    // Client error
+```
+
+Case'ler yukarıdan aşağıya kontrol edildiği için özel durumlar genel durumlardan önce yazılır. `403` case'i `400..<500`'den sonra yazılsaydı hiçbir zaman çalışmazdı.
+
+**Tuple ile switch.** Birden fazla değere aynı anda bakmak gerektiğinde değerler bir tuple'da toplanır. `_` herhangi bir değerle eşleşir.
+
+```swift
+enum Plan {
+    case free, pro, team
+}
+
+func uploadLimitInMB(isVerified: Bool, plan: Plan) -> Int {
+    switch (isVerified, plan) {
+    case (false, _): 10
+    case (true, .free): 100
+    case (true, .pro), (true, .team): 1_000
+    }
+}
+```
+
+Bu fonksiyonda `default` yoktur ve buna gerek de yoktur. `Bool` ve `Plan` değerlerinin tüm kombinasyonları kapsanmıştır.
+
+**Value binding ve where.** Eşleşen değerin bir kısmı `let` ile isimlendirilip case içinde kullanılabilir. `where` ek bir koşul ekler.
+
+```swift
+let response: (statusCode: Int, retryAfter: Int?) = (429, 30)
+
+switch response {
+case (429, let seconds?):
+    print("Rate limited, retry in \(seconds)s")
+case (let code, _) where code >= 500:
+    print("Server error \(code), retry with backoff")
+case (let code, _):
+    print("Finished with \(code)")
+}
+```
+
+> [!TIP]
+> Kendi enum'ların üzerinde `switch` yazarken `default` kullanmaktan kaçınılır. Tüm case'ler açıkça yazılırsa, enum'a yeni bir case eklendiğinde derleyici güncellenmesi gereken her `switch`'i hata olarak gösterir. `default` yazıldığında yeni case sessizce oraya düşer.
+
+`fallthrough` C'deki davranışı bilinçli olarak geri getirir ama gerçek projelerde nadiren gerekir. Aynı işi yapan değerler genellikle tek case'te virgülle birleştirilir.
+
+### Control transfer
+
+| İfade | Etkisi |
+|---|---|
+| `continue` | Döngünün bu turunu bitirir, sonraki tura geçer |
+| `break` | Döngüden ya da `switch`'ten çıkar |
+| `fallthrough` | `switch`'te bir sonraki case'e geçer |
+| `return` | Fonksiyondan çıkar |
+| `throw` | Hata fırlatarak kapsamdan çıkar |
+
+İç içe döngülerde `break` sadece en içteki döngüden çıkar. Dıştaki döngüden çıkmak için döngüye etiket verilir.
+
+```swift
+let weeklySlots = [["09:00", "10:00"], ["11:00", "13:00"], ["13:00", "15:00"]]
+var firstMatch: (day: Int, slot: String)?
+
+search: for (day, slots) in weeklySlots.enumerated() {
+    for slot in slots where slot == "13:00" {
+        firstMatch = (day, slot)
+        break search
+    }
+}
+
+print(firstMatch?.day ?? -1)    // 1
+```
+
+### Early exit
+
+`guard`, bir koşul sağlanmazsa kapsamdan erken çıkmak için kullanılır. Fonksiyonlarda nasıl kullanıldığı [The Basics](#1-the-basics) bölümünde anlatıldı. Döngü içinde `guard` ile `continue` birlikte kullanılarak geçersiz elemanlar atlanır.
+
+```swift
+let rawPrices = ["12.5", "abc", "", "40"]
+var prices: [Double] = []
+
+for raw in rawPrices {
+    guard let price = Double(raw) else { continue }
+    prices.append(price)
+}
+print(prices)    // [12.5, 40.0]
+```
+
+### defer
+
+`defer` bloğu, içinde bulunduğu kapsamdan nasıl çıkılırsa çıkılsın (`return`, `throw`, `break` ya da kapsamın sonu) çıkış anında çalışır. Temizlik işlemlerini, işi başlatan kodun hemen yanına yazmayı sağlar. Böylece fonksiyona sonradan yeni bir `return` eklense bile temizlik atlanmaz.
+
+```swift
+enum FeedError: Error {
+    case offline
+}
+
+final class FeedLoader {
+    private(set) var isLoading = false
+    var isOnline = false
+
+    func load() throws -> [String] {
+        isLoading = true
+        defer { isLoading = false }
+
+        guard isOnline else { throw FeedError.offline }
+        return ["Post 1", "Post 2"]
+    }
+}
+
+let loader = FeedLoader()
+do {
+    _ = try loader.load()
+} catch {
+    print(error, loader.isLoading)    // offline false
+}
+```
+
+Aynı kapsamda birden fazla `defer` varsa ters sırayla çalışırlar: en son yazılan ilk çalışır. Bu sıra, kaynakları açıldıkları sıranın tersine kapatmak için uygundur.
+
+> [!NOTE]
+> Gerçek projelerdeki tipik `defer` kullanımları: loading durumunu sıfırlamak, bir kilidi bırakmak (`lock.unlock()`), açılan dosyayı kapatmak, `UIApplication.endBackgroundTask` çağırmak, test sonunda geçici dosyayı silmek.
+
+### Availability
+
+Bir API sadece belirli işletim sistemi sürümlerinde varsa, kullanmadan önce sürüm kontrolü yapılır. Derleyici bu kontrolü zorunlu tutar.
+
+```swift
+func configureAppearance() {
+    if #available(iOS 17, macOS 14, *) {
+        print("Use the new API")
+    } else {
+        print("Fall back to the old API")
+    }
+}
+
+@available(iOS 17, macOS 14, *)
+func makeModernLayout() {
+    print("Only callable on iOS 17 and later")
+}
+```
+
+`*` işareti, listede adı geçmeyen platformlarda minimum deployment target'ın geçerli olduğunu belirtir. Ters kontrol için `if #unavailable(iOS 17)` yazılır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Swift'teki switch, C'deki switch'ten nasıl farklıdır?</b></summary>
+
+Swift'te `switch` tüm durumları kapsamak zorundadır, aksi halde derlenmez. Case'ler arasında örtük geçiş yoktur, bu yüzden `break` unutmaktan kaynaklanan hatalar oluşmaz. Sadece tam sayılarla değil her tiple çalışır ve range, tuple, enum associated value, tip kontrolü gibi pattern'leri destekler. `let` ile değer bağlanabilir, `where` ile ek koşul eklenebilir.
+</details>
+
+<details>
+<summary><b>Kendi enum'unun switch'inde neden default kullanmaktan kaçınırsın?</b></summary>
+
+Tüm case'leri açıkça yazarsam, enum'a yeni bir case eklendiğinde derleyici o enum'u kullanan her `switch`'i hata olarak gösterir ve hiçbir yer gözden kaçmaz. `default` yazarsam yeni case sessizce varsayılan dala düşer ve hata ancak çalışma anında fark edilir.
+</details>
+
+<details>
+<summary><b>defer ne zaman çalışır? Birden fazla defer olursa sıra nedir?</b></summary>
+
+`defer` bloğu, içinde tanımlandığı kapsamdan çıkılırken çalışır. Çıkışın `return`, `throw` ya da kapsamın sonu olması fark etmez. Birden fazla `defer` varsa ters sırayla çalışırlar, en son tanımlanan ilk çalışır. Tipik kullanımı temizliktir: loading durumunu sıfırlamak, kilidi bırakmak, dosyayı kapatmak.
+</details>
+
+<details>
+<summary><b>while ile repeat-while arasındaki fark ne, gerçek bir kullanım örneği verir misin?</b></summary>
+
+`while` koşulu turun başında kontrol eder, koşul baştan sağlanmazsa gövde hiç çalışmaz. `repeat-while` koşulu sonda kontrol eder, gövde en az bir kez çalışır. Cursor tabanlı sayfalama iyi bir örnektir. İlk sayfa her zaman istenir, sonraki sayfalar ise cevaptaki cursor dolu olduğu sürece istenir.
+</details>
+
+<details>
+<summary><b>İç içe iki döngüde, içteki döngüden dıştakini nasıl sonlandırırsın?</b></summary>
+
+Dıştaki döngüye bir etiket veririm (`search: for ...`) ve içeride `break search` yazarım. Etiketsiz `break` sadece en içteki döngüden çıkar.
+</details>
+
+---
+
+## 6. Functions
+
+Fonksiyonlar Swift'te first class değerlerdir. Bir değişkene atanabilir, parametre olarak verilebilir ve başka bir fonksiyondan döndürülebilir. Swift'in fonksiyon söz dizimi, çağrıldığı yerde bir İngilizce cümle gibi okunacak şekilde tasarlanmıştır.
+
+### Argument label ve parameter name
+
+Her parametrenin iki adı vardır. Argument label, fonksiyon çağrılırken yazılır. Parameter name ise fonksiyonun gövdesinde kullanılır. Tek bir ad yazılırsa ikisi aynı olur. Label'ı kaldırmak için `_` kullanılır.
+
+```swift
+struct Account {
+    var balance: Decimal
+}
+
+func transfer(_ amount: Decimal, from source: inout Account, to destination: inout Account) {
+    source.balance -= amount
+    destination.balance += amount
+}
+
+var checking = Account(balance: 500)
+var savings = Account(balance: 100)
+transfer(150, from: &checking, to: &savings)
+print(checking.balance, savings.balance)    // 350 250
+```
+
+Çağrı noktası "transfer 150 from checking to savings" diye okunur. Gövdede ise `source` ve `destination` gibi anlamı daha açık isimler kullanılır.
+
+> [!TIP]
+> Swift API Design Guidelines'ın temel kuralları:
+> - Çağrı noktasında okunabilirlik, tanımın kısalığından önemlidir.
+> - İlk argüman fonksiyon adıyla birlikte doğal bir ifade oluşturuyorsa label kaldırılır: `print(_:)`, `append(_:)`, `contains(_:)`.
+> - Argümanın rolünü bir edat anlatıyorsa label olarak edat kullanılır: `remove(at:)`, `move(from:to:)`, `fetchUser(withID:)`.
+> - Yan etkisi olan fonksiyonlar fiil (`sort()`), yeni değer döndürenler isim ya da sıfat fiil (`sorted()`) olarak adlandırılır.
+
+### Default parameter values
+
+Varsayılan değerler, aynı fonksiyonun birçok overload'unu yazma ihtiyacını ortadan kaldırır. Varsayılan değerli parametreler genellikle listenin sonuna yazılır.
+
+```swift
+enum SortOrder {
+    case newest, mostPopular
+}
+
+func fetchArticles(page: Int = 1, pageSize: Int = 20, sort: SortOrder = .newest) -> String {
+    "page=\(page)&size=\(pageSize)&sort=\(sort)"
+}
+
+print(fetchArticles())                          // page=1&size=20&sort=newest
+print(fetchArticles(page: 3))                   // page=3&size=20&sort=newest
+print(fetchArticles(sort: .mostPopular))        // page=1&size=20&sort=mostPopular
+```
+
+### Variadic parameters
+
+Variadic parametre, aynı tipte sıfır ya da daha fazla değer kabul eder. Fonksiyonun içinde bir dizi olarak görünür.
+
+```swift
+enum LogLevel: String {
+    case debug, info, error
+}
+
+func log(_ messages: String..., level: LogLevel = .info) {
+    print("[\(level.rawValue.uppercased())] " + messages.joined(separator: " "))
+}
+
+log("User", "42", "signed in")                  // [INFO] User 42 signed in
+log("Token refresh failed", level: .error)      // [ERROR] Token refresh failed
+```
+
+### In-out parameters
+
+Parametreler varsayılan olarak sabittir, fonksiyon içinde değiştirilemez. Bir parametrenin değişikliğinin çağıran tarafa yansıması isteniyorsa `inout` kullanılır ve çağrılırken başına `&` konur. Yukarıdaki `transfer` fonksiyonu buna örnektir.
+
+`inout` referans geçirme değildir, copy in copy out olarak çalışır. Değer fonksiyona kopyalanır, fonksiyon bitince değiştirilmiş hali orijinal değişkene geri yazılır. Bu yüzden `inout` argüman olarak sadece `var` verilebilir. `let` sabitler ve literal'lar verilemez.
+
+> [!TIP]
+> `inout` yerine çoğu zaman yeni değer döndürmek daha okunaklıdır. `inout`, standart kütüphanedeki `swap(_:_:)` gibi bir değeri yerinde değiştiren yardımcı fonksiyonlarda ya da büyük bir struct'ı kopyalamadan güncellemek gerektiğinde tercih edilir.
+
+### Return values
+
+Gövdesi tek bir ifadeden oluşan fonksiyonlarda `return` yazılmayabilir (implicit return). Birden fazla değer döndürmek için tuple, sonuç olmayabiliyorsa optional dönüş tipi kullanılır.
+
+```swift
+func priceRange(of prices: [Decimal]) -> (min: Decimal, max: Decimal)? {
+    guard let low = prices.min(), let high = prices.max() else { return nil }
+    return (low, high)
+}
+
+if let range = priceRange(of: [49.9, 19.9, 120]) {
+    print("\(range.min) - \(range.max)")    // 19.9 - 120
+}
+```
+
+Dönüş değeri çoğu zaman kullanılmayan fonksiyonlar `@discardableResult` ile işaretlenir. Böylece sonuç kullanılmadığında derleyici uyarı vermez.
+
+```swift
+final class Cache {
+    private var storage: [String: Data] = [:]
+
+    @discardableResult
+    func removeValue(forKey key: String) -> Data? {
+        storage.removeValue(forKey: key)
+    }
+}
+
+let cache = Cache()
+cache.removeValue(forKey: "avatar")
+```
+
+Hiçbir zaman normal şekilde geri dönmeyen fonksiyonların dönüş tipi `Never`'dır. `fatalError` bu şekilde tanımlanmıştır. Derleyici `Never` döndüren bir çağrıdan sonra kodun devam etmeyeceğini bilir.
+
+### Function types
+
+Her fonksiyonun parametre ve dönüş tiplerinden oluşan bir tipi vardır. `(String) -> String?` "String alıp optional String döndüren fonksiyon" demektir. Fonksiyonlar bu tip üzerinden değişkene atanabilir, parametre olarak verilebilir ve döndürülebilir.
+
+Aşağıdaki örnekte form doğrulama kuralları birer fonksiyon olarak tanımlanıyor. Kurallar bir dizide toplanıyor ve sırayla uygulanıyor.
+
+```swift
+typealias Validator = (String) -> String?
+
+func notEmpty(_ value: String) -> String? {
+    value.isEmpty ? "This field is required" : nil
+}
+
+func minLength(_ length: Int) -> Validator {
+    { value in
+        value.count >= length ? nil : "Must be at least \(length) characters"
+    }
+}
+
+let passwordRules: [Validator] = [notEmpty, minLength(8)]
+let errors = passwordRules.compactMap { rule in rule("abc") }
+print(errors)    // ["Must be at least 8 characters"]
+```
+
+`minLength(8)` bir fonksiyon döndüren bir fonksiyondur. `notEmpty` ise parantezsiz yazılarak fonksiyonun kendisi olarak diziye eklenir.
+
+> [!WARNING]
+> Fonksiyonu bir değer olarak vermekle çağırmanın sonucunu vermek farklı şeylerdir. `notEmpty` fonksiyonun kendisidir ve tipi `(String) -> String?`'dir. `notEmpty("abc")` ise çağrının sonucudur ve tipi `String?`'dir. `[notEmpty()]` yazmak derlenmez, çünkü fonksiyon argüman olmadan çağrılamaz.
+
+### Nested functions
+
+Bir fonksiyon başka bir fonksiyonun içinde tanımlanabilir. İç fonksiyon dışarıdan görünmez ve dış fonksiyonun değişkenlerine erişebilir. Sadece tek bir fonksiyonda kullanılan yardımcı mantığı dışarı sızdırmadan gruplamak için kullanılır.
+
+```swift
+func formattedDuration(seconds: Int) -> String {
+    func pad(_ value: Int) -> String {
+        value < 10 ? "0\(value)" : "\(value)"
+    }
+    return "\(pad(seconds / 60)):\(pad(seconds % 60))"
+}
+
+print(formattedDuration(seconds: 125))    // 02:05
+```
+
+### Mülakat soruları
+
+<details>
+<summary><b>Argument label ile parameter name arasındaki fark ne, neden ikisi ayrı?</b></summary>
+
+Argument label fonksiyon çağrılırken, parameter name fonksiyonun gövdesinde kullanılır. Ayrı olmaları çağrı noktasının bir cümle gibi okunmasını sağlar. Örneğin `move(from: a, to: b)` çağrıda doğal okunur, gövdede ise `source` ve `destination` gibi daha açık isimler kullanılabilir. İlk argüman fonksiyon adıyla zaten anlaşılıyorsa label `_` ile kaldırılır.
+</details>
+
+<details>
+<summary><b>inout nasıl çalışır? Referans ile geçirmek mi?</b></summary>
+
+Hayır, copy in copy out şeklinde çalışır. Değer fonksiyona kopyalanır, fonksiyon bittiğinde değiştirilmiş hali orijinal değişkene yazılır. Bu yüzden sadece `var` verilebilir ve çağrıda `&` yazmak zorunludur. Derleyici bazı durumlarda bunu referans ile geçirme şeklinde optimize edebilir ama anlam olarak copy in copy out'tur. Aynı değişkene aynı anda iki `inout` erişim derleyici tarafından engellenir (bkz. [Memory Safety](#27-memory-safety)).
+</details>
+
+<details>
+<summary><b>Default parameter value mu, overload mu?</b></summary>
+
+Aynı işi yapan ama bazı parametreleri isteğe bağlı olan fonksiyonlar için varsayılan değer tercih edilir. Tek bir implementasyon olur ve tüm kombinasyonlar desteklenir. Overload, parametre tipleri ya da davranış gerçekten farklıysa anlamlıdır.
+</details>
+
+<details>
+<summary><b>Swift'te fonksiyonların first class olması ne demek?</b></summary>
+
+Fonksiyonlar diğer değerler gibi davranır. Bir değişkene atanabilir, bir koleksiyonda saklanabilir, başka bir fonksiyona parametre olarak verilebilir ve bir fonksiyondan döndürülebilir. `map`, `filter`, `sorted(by:)` gibi API'ler ve completion handler'lar bu özelliğe dayanır.
+</details>
+
+<details>
+<summary><b>@discardableResult ne işe yarar?</b></summary>
+
+Değer döndüren bir fonksiyonun sonucu kullanılmadığında derleyici uyarı verir. Sonucu çoğu zaman kullanılmayan fonksiyonlar `@discardableResult` ile işaretlenerek bu uyarı kaldırılır. Örnekler: silinen değeri de döndüren bir `remove` fonksiyonu ya da zincirleme kullanım için `self` döndüren bir builder metodu.
+</details>
+
+---
+
+## 7. Closures
+
+Closure, bir değişkene atanabilen ya da parametre olarak verilebilen bir kod bloğudur. Fonksiyonlar aslında closure'ın özel bir halidir. Closure'ları güçlü yapan özellik, tanımlandıkları yerdeki değişkenleri yakalayıp (capture) daha sonra çalıştırıldıklarında da kullanabilmeleridir.
+
+Swift'te closure'ın üç biçimi vardır:
+
+- Global fonksiyonlar: isimleri vardır, hiçbir değer yakalamazlar.
+- Nested fonksiyonlar: isimleri vardır, dış fonksiyonun değerlerini yakalayabilirler.
+- Closure expression'lar: isimsizdir, çevrelerindeki değerleri yakalayabilirler.
+
+### Closure expression söz dizimi
+
+Closure'ın tam yazımı süslü parantez içinde parametreler, dönüş tipi ve `in` anahtar kelimesinden sonra gövdeden oluşur. Swift, bağlamdan çıkarabildiği her şeyi yazmamaya izin verir.
+
+```swift
+let usernames = ["zeynep", "ali", "berk"]
+
+let a = usernames.sorted(by: { (lhs: String, rhs: String) -> Bool in
+    return lhs < rhs
+})
+let b = usernames.sorted(by: { lhs, rhs in lhs < rhs })    // tipler ve return çıkarıldı
+let c = usernames.sorted { $0 < $1 }                       // shorthand argument names, trailing closure
+let d = usernames.sorted(by: <)                            // operatörün kendisi bir fonksiyondur
+
+print(d)    // ["ali", "berk", "zeynep"]
+```
+
+`$0`, `$1` kısa yazımları closure tek satır ve anlamı açık olduğunda kullanılır. Gövde uzadığında parametrelere isim vermek okunabilirliği korur.
+
+### Trailing closures
+
+Bir fonksiyonun son parametresi closure ise, closure parantezlerin dışına yazılabilir. Closure tek parametre ise parantezler tamamen kaldırılabilir. Birden fazla closure parametresi varsa ilki label'sız, sonrakiler label ile yazılır. SwiftUI'daki `Button { } label: { }` kullanımı bu şekildedir.
+
+```swift
+func performRequest(
+    _ path: String,
+    onSuccess: (String) -> Void,
+    onFailure: (Int) -> Void
+) {
+    path.hasPrefix("/v1") ? onSuccess("{}") : onFailure(404)
+}
+
+performRequest("/v1/me") { body in
+    print("Body: \(body)")
+} onFailure: { code in
+    print("Failed with \(code)")
+}
+```
+
+### Closure'ı çağırmak
+
+Closure bir değerdir. Tanımlamak onu çalıştırmaz. Çalıştırmak için sonuna parantez eklenir, tıpkı bir fonksiyon gibi.
+
+```swift
+let refresh: () -> Void = {
+    print("Refreshing feed")
+}
+
+let action = refresh    // closure'ın kendisi, hiçbir şey yazdırılmaz
+action()                // Refreshing feed
+```
+
+> [!WARNING]
+> `{ }` closure'ı paketler, `()` çalıştırır. Bir property'de saklanan `transform` closure'ını çalıştırmak için `transform(value)` yazılır. Sadece `transform` yazmak closure'ı bir değer olarak verir. Optional bir closure `onChange?(value)` şeklinde çağrılır.
+
+### Capturing values
+
+Closure, gövdesinde kullandığı dış değişkenleri yakalar. Yakalama, değişkenin o anki değerini kopyalamak değil, değişkenin kendisine bir referans tutmaktır. Değişken sonradan değişirse closure yeni değeri görür. Closure'ın yakaladığı değişken, tanımlandığı kapsam bitse bile closure yaşadığı sürece yaşar.
+
+```swift
+func makeIDGenerator(prefix: String) -> () -> String {
+    var next = 0
+    return {
+        next += 1
+        return "\(prefix)-\(next)"
+    }
+}
+
+let nextOrderID = makeIDGenerator(prefix: "ORD")
+print(nextOrderID())    // ORD-1
+print(nextOrderID())    // ORD-2
+
+let nextInvoiceID = makeIDGenerator(prefix: "INV")
+print(nextInvoiceID())  // INV-1
+```
+
+`makeIDGenerator` fonksiyonu bittiğinde `next` değişkeni yok olmaz, çünkü döndürülen closure onu yakalamıştır. Her çağrı kendi `next` değişkenine sahip yeni bir closure üretir.
+
+Değişkenin o anki değerini sabitlemek için capture list kullanılır. Capture list'teki değer, closure oluşturulduğu anda kopyalanır.
+
+```swift
+func makeLoggers() -> (live: () -> Void, snapshot: () -> Void) {
+    var environment = "staging"
+    let live = { print("live: \(environment)") }
+    let snapshot = { [environment] in print("snapshot: \(environment)") }
+    environment = "production"
+    return (live, snapshot)
+}
+
+let loggers = makeLoggers()
+loggers.live()        // live: production
+loggers.snapshot()    // snapshot: staging
+```
+
+> [!IMPORTANT]
+> Closure'lar reference type'tır. Bir closure'ı başka bir değişkene atamak yeni bir kopya oluşturmaz, iki değişken aynı closure'ı ve aynı yakalanmış değişkenleri gösterir. Bu özellik, bir class'ın kendi property'sinde sakladığı closure içinde `self`'i yakaladığında retain cycle oluşmasının sebebidir.
+
+### Escaping closures
+
+Bir fonksiyona verilen closure, fonksiyon döndükten sonra çağrılacaksa ya da bir yerde saklanacaksa `@escaping` olarak işaretlenmelidir. Completion handler'lar, bir property'de saklanan callback'ler ve asenkron çalışan işler bu duruma örnektir. `@escaping` bir attribute'tur ve parametrenin tipine yazılır.
+
+Closure parametreleri varsayılan olarak non-escaping'dir. Derleyici, non-escaping bir closure'ın fonksiyon bitmeden çalışıp yok olacağını bilir. Bu sayede daha iyi optimizasyon yapar ve closure içinde `self` yazmayı zorunlu tutmaz.
+
+```swift
+struct User {
+    let id: Int
+    let name: String
+}
+
+enum ServiceError: Error {
+    case notFound
+}
+
+final class UserService {
+    private var pendingRequests: [(Result<User, ServiceError>) -> Void] = []
+
+    func fetchUser(id: Int, completion: @escaping (Result<User, ServiceError>) -> Void) {
+        pendingRequests.append(completion)    // saklandığı için @escaping zorunlu
+    }
+
+    func deliver(_ result: Result<User, ServiceError>) {
+        pendingRequests.forEach { $0(result) }
+        pendingRequests.removeAll()
+    }
+}
+
+final class ProfileViewModel {
+    private let service: UserService
+    private(set) var title = "Loading"
+
+    init(service: UserService) {
+        self.service = service
+    }
+
+    func load() {
+        service.fetchUser(id: 42) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let user): self.title = user.name
+            case .failure: self.title = "Something went wrong"
+            }
+        }
+    }
+}
+
+let service = UserService()
+let viewModel = ProfileViewModel(service: service)
+viewModel.load()
+service.deliver(.success(User(id: 42, name: "Ada")))
+print(viewModel.title)    // Ada
+```
+
+> [!IMPORTANT]
+> Escaping closure içinde `self`'in açıkça yazılması zorunludur. Swift bunu bilinçli olarak ister: `self` yazdığın anda closure'ın `self`'i güçlü şekilde tuttuğunu görürsün. Closure `self`'in bir property'sinde saklanıyorsa ya da `self`'ten uzun yaşayabiliyorsa `[weak self]` kullanılır. Ayrıntılar [Automatic Reference Counting](#26-automatic-reference-counting) bölümünde.
+
+> [!NOTE]
+> Struct ve enum gibi value type'larda escaping closure içinde `self` değiştirilemez. Closure, fonksiyon bittikten sonra çalışabileceği için o anda değiştirilecek bir `self` kopyası artık olmayabilir.
+
+### Autoclosures
+
+`@autoclosure`, parametre olarak verilen bir ifadeyi otomatik olarak closure'a sarar. Böylece ifade, çağrıldığı anda değil, fonksiyon gerçekten ihtiyaç duyduğunda değerlendirilir. `??`, `assert` ve `&&` operatörlerinin sağ tarafı bu şekilde çalışır.
+
+```swift
+let isVerboseLoggingEnabled = false
+
+func debugLog(_ message: @autoclosure () -> String) {
+    guard isVerboseLoggingEnabled else { return }
+    print(message())
+}
+
+let payload = Array(repeating: "item", count: 10_000)
+debugLog("Payload: \(payload.joined(separator: ","))")    // loglama kapalıyken string hiç oluşturulmaz
+```
+
+### Higher order functions
+
+Koleksiyonlarla çalışırken en sık kullanılan closure tabanlı API'ler:
+
+| Fonksiyon | Ne yapar | Dönüş |
+|---|---|---|
+| `map` | Her elemanı dönüştürür | Aynı uzunlukta yeni dizi |
+| `compactMap` | Dönüştürür, `nil` sonuçları atar | Optional olmayan yeni dizi |
+| `flatMap` | Her eleman için dizi üretir, sonuçları tek dizide birleştirir | Düzleştirilmiş dizi |
+| `filter` | Koşula uyanları tutar | Yeni dizi |
+| `reduce` | Tüm elemanları tek bir değerde toplar | Tek değer |
+| `first(where:)` | Koşula uyan ilk eleman | Optional |
+| `contains(where:)` | Koşula uyan eleman var mı | `Bool` |
+| `allSatisfy` | Tüm elemanlar koşula uyuyor mu | `Bool` |
+| `sorted(by:)` | Sıralanmış yeni dizi | Yeni dizi |
+
+```swift
+struct LineItem {
+    let sku: String
+    let quantity: Int
+    let unitPrice: Decimal
+}
+
+let cart = [
+    LineItem(sku: "KB-01", quantity: 1, unitPrice: 1_200),
+    LineItem(sku: "MS-07", quantity: 2, unitPrice: 350),
+    LineItem(sku: "CB-11", quantity: 0, unitPrice: 90)
+]
+
+let skus = cart.map(\.sku)
+let purchasable = cart.filter { $0.quantity > 0 }
+let total = purchasable.reduce(0) { sum, item in sum + item.unitPrice * Decimal(item.quantity) }
+
+print(skus)     // ["KB-01", "MS-07", "CB-11"]
+print(total)    // 1900
+
+let couponInputs = ["10", "abc", "25"]
+let discounts = couponInputs.compactMap { Int($0) }
+print(discounts)    // [10, 25]
+```
+
+`reduce(into:)`, sonucun bir koleksiyon olduğu durumlarda her adımda yeni kopya oluşturmadığı için daha verimlidir.
+
+```swift
+let quantitiesBySKU = cart.reduce(into: [String: Int]()) { result, item in
+    result[item.sku] = item.quantity
+}
+print(quantitiesBySKU["MS-07"] ?? 0)    // 2
+```
+
+> [!WARNING]
+> `reduce` closure'ında ilk parametre (`$0`) o ana kadar biriken sonuçtur, ikinci parametre (`$1`) sıradaki elemandır. `$0`'ı eleman sanmak sık yapılan bir hatadır. `reduce` closure'larında parametrelere isim vermek (`sum, item`) bu karışıklığı önler.
+
+> [!TIP]
+> `forEach` yerine çoğu zaman `for-in` tercih edilir. `forEach` içinde `break` ve `continue` kullanılamaz, `return` ise sadece o turu bitirir. `forEach`, kısa ve yan etki üreten zincirlerin sonunda anlamlıdır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Closure nedir, fonksiyondan farkı ne?</b></summary>
+
+Closure, bir değer olarak taşınabilen bir kod bloğudur ve tanımlandığı ortamdaki değişkenleri yakalayabilir. Fonksiyonlar aslında isimli closure'lardır. Global fonksiyonlar hiçbir değer yakalamaz. Nested fonksiyonlar ve closure expression'lar ise çevrelerindeki değişkenleri yakalar ve bu değişkenler, tanımlandıkları kapsam bitse bile closure yaşadığı sürece yaşar.
+</details>
+
+<details>
+<summary><b>@escaping ne demek, closure'lar neden varsayılan olarak non-escaping?</b></summary>
+
+`@escaping`, closure'ın fonksiyon döndükten sonra çağrılabileceğini ya da bir yerde saklanabileceğini belirten bir attribute'tur. Completion handler'lar en tipik örnektir. Varsayılan non-escaping'dir çünkü derleyici, closure'ın fonksiyon içinde çalışıp biteceğini bildiğinde daha iyi optimizasyon yapabilir. Ayrıca non-escaping closure'larda retain cycle riski olmadığı için `self` açıkça yazılmak zorunda değildir.
+</details>
+
+<details>
+<summary><b>Escaping closure içinde neden self yazmak zorundayız?</b></summary>
+
+Escaping closure, `self`'i güçlü şekilde yakalar ve fonksiyon bittikten sonra da yaşayabilir. `self` de o closure'ı saklıyorsa retain cycle oluşur. Swift, `self`'i açıkça yazdırarak geliştiricinin bu yakalamanın farkında olmasını sağlar. Gerekirse `[weak self]` ile güçlü yakalama engellenir.
+</details>
+
+<details>
+<summary><b>Closure'lar value type mı reference type mı? Bunun pratik sonucu ne?</b></summary>
+
+Reference type'tır. Bir closure'ı başka bir değişkene atamak aynı closure'ı ve aynı yakalanmış değişkenleri paylaşmak anlamına gelir. Pratik sonucu şudur: bir class kendi property'sinde bir closure saklar ve o closure `self`'i güçlü şekilde yakalarsa ikisi birbirini tutar ve hiçbiri bellekten silinmez.
+</details>
+
+<details>
+<summary><b>Capture list ne işe yarar?</b></summary>
+
+İki işe yarar. Birincisi, bir değişkenin closure oluşturulduğu andaki değerini kopyalar. Sonradan değişken değişse bile closure eski değeri kullanır. İkincisi, reference type'ların nasıl yakalanacağını belirler. `[weak self]` ve `[unowned self]` retain cycle'ı kırmak için kullanılır.
+</details>
+
+<details>
+<summary><b>map, compactMap ve flatMap arasındaki fark ne?</b></summary>
+
+`map` her elemanı dönüştürür ve aynı uzunlukta bir dizi döndürür. `compactMap` dönüştürme sonucu optional olduğunda `nil` olanları atar ve sadece dolu değerleri döndürür, örneğin `["1", "x"].compactMap { Int($0) }` sonucu `[1]` olur. `flatMap` her eleman için bir dizi üretir ve bunları tek bir diziye birleştirir.
+</details>
+
+<details>
+<summary><b>@autoclosure nedir, nerede kullanılır?</b></summary>
+
+Parametre olarak verilen ifadeyi otomatik olarak bir closure'a sarar. Böylece ifade, fonksiyon gerçekten ihtiyaç duyduğunda değerlendirilir. `??` operatörünün sağ tarafı, `assert`'in mesajı ve `&&`'nin sağ tarafı bu şekilde çalışır. Kendi kodumda pahalı log mesajlarını sadece loglama açıkken oluşturmak için kullanabilirim.
+</details>
+
+---
+
+## 8. Enumerations
+
+Enum, birbiriyle ilişkili bir grup değeri tek bir tip altında toplar. Swift'te enum'lar C'dekinden çok daha güçlüdür: her case'e farklı tipte veri (associated value) iliştirilebilir, metot ve computed property tanımlanabilir, protokollere uyulabilir. Bir değerin sadece belirli durumlardan biri olabildiği her yerde ilk akla gelen araçtır.
+
+### Temel kullanım ve CaseIterable
+
+```swift
+enum Environment: CaseIterable {
+    case development, staging, production
+
+    var baseURL: String {
+        switch self {
+        case .development: "http://localhost:8080"
+        case .staging: "https://staging.api.example.com"
+        case .production: "https://api.example.com"
+        }
+    }
+}
+
+let current = Environment.staging
+print(current.baseURL)
+print(Environment.allCases.count)    // 3
+```
+
+`CaseIterable`, tüm case'leri içeren `allCases` dizisini otomatik üretir. Ayarlar ekranında seçenek listesi göstermek gibi durumlarda kullanılır.
+
+### Raw values
+
+Her case'e aynı tipte sabit bir değer verilebilir. Raw value tipi `String`, `Character`, tam sayı ya da ondalıklı sayı olabilir. `String` raw value'da değer verilmezse case'in adı, `Int`'te ise sıfırdan başlayarak artan sayılar kullanılır.
+
+Raw value'dan enum oluşturan `init?(rawValue:)` failable'dır, çünkü verilen değere karşılık gelen bir case olmayabilir.
+
+```swift
+enum OrderStatus: String, Codable {
+    case pending
+    case shipped
+    case delivered
+    case cancelled = "canceled"
+}
+
+let fromAPI = OrderStatus(rawValue: "shipped")    // .shipped
+let unknown = OrderStatus(rawValue: "returned")   // nil
+
+let json = #"{"status": "canceled"}"#.data(using: .utf8)!
+struct OrderDTO: Codable {
+    let status: OrderStatus
+}
+let order = try JSONDecoder().decode(OrderDTO.self, from: json)
+print(order.status)    // cancelled
+```
+
+> [!TIP]
+> API'den gelen string değerleri doğrudan `String` olarak saklamak yerine raw value'lu bir enum'a çevirmek yazım hatalarını ortadan kaldırır ve `switch` ile tüm durumların ele alınmasını sağlar. Case adı Swift isimlendirme kurallarına uyarken (`cancelled`), raw value API'nin beklediği değeri (`canceled`) taşıyabilir.
+
+> [!WARNING]
+> Sunucu, enum'da olmayan yeni bir değer göndermeye başlarsa decode işlemi hata fırlatır ve tüm cevap çözümlenemez. Kritik durumlarda bilinmeyen değerleri karşılayan bir case eklemek ya da decode'u özelleştirmek gerekir.
+
+### Associated values
+
+Associated value, bir case'e o case'e özel veri iliştirir. Her case farklı tipte ve sayıda değer taşıyabilir. Bu özellik bir ekranın durumunu modellemek için idealdir.
+
+```swift
+struct Article {
+    let title: String
+}
+
+enum LoadState {
+    case idle
+    case loading
+    case loaded([Article])
+    case failed(message: String, canRetry: Bool)
+}
+
+func render(_ state: LoadState) -> String {
+    switch state {
+    case .idle:
+        "Pull to refresh"
+    case .loading:
+        "Loading"
+    case .loaded(let articles) where articles.isEmpty:
+        "No articles yet"
+    case .loaded(let articles):
+        "\(articles.count) articles"
+    case .failed(let message, canRetry: true):
+        "\(message). Tap to retry"
+    case .failed(let message, canRetry: false):
+        message
+    }
+}
+
+print(render(.loaded([Article(title: "Swift 6"), Article(title: "SwiftData")])))   // 2 articles
+print(render(.failed(message: "Offline", canRetry: true)))             // Offline. Tap to retry
+```
+
+> [!IMPORTANT]
+> Bu yaklaşım, geçersiz durumların temsil edilememesini sağlar. Aynı ekran `isLoading: Bool`, `articles: [Article]`, `error: String?` property'leriyle modellenseydi "hem yükleniyor hem hata var" gibi anlamsız kombinasyonlar mümkün olurdu. Enum ile ekran aynı anda sadece tek bir durumda olabilir.
+
+Sadece tek bir case'i kontrol etmek için `switch` yerine `if case` ya da `guard case` kullanılır.
+
+```swift
+let state = LoadState.failed(message: "Timeout", canRetry: true)
+
+if case .failed(let message, _) = state {
+    print("Log: \(message)")
+}
+```
+
+> [!NOTE]
+> Bir enum'da raw value ve associated value birlikte kullanılamaz. Raw value derleme anında sabittir. Associated value ise her instance oluşturulduğunda verilir.
+
+### Metotlar ve mutating
+
+Enum'lar metot ve computed property içerebilir. Enum'un kendi değerini değiştiren metotlar `mutating` olarak işaretlenir.
+
+```swift
+enum PlaybackState {
+    case playing, paused, stopped
+
+    mutating func togglePlayPause() {
+        switch self {
+        case .playing: self = .paused
+        case .paused, .stopped: self = .playing
+        }
+    }
+}
+
+var playback = PlaybackState.stopped
+playback.togglePlayPause()
+print(playback)    // playing
+```
+
+### Recursive enumerations
+
+Bir case'in associated value'su enum'un kendi tipini içeriyorsa case `indirect` olarak işaretlenir. Swift bu durumda değeri dolaylı olarak, ayrı bir bellek alanında saklar. İç içe filtreler ya da ifade ağaçları gibi yapılar için kullanılır.
+
+```swift
+struct Product {
+    let price: Int
+    let tags: Set<String>
+}
+
+indirect enum Filter {
+    case tag(String)
+    case maxPrice(Int)
+    case and(Filter, Filter)
+    case or(Filter, Filter)
+
+    func matches(_ product: Product) -> Bool {
+        switch self {
+        case .tag(let tag): product.tags.contains(tag)
+        case .maxPrice(let limit): product.price <= limit
+        case .and(let lhs, let rhs): lhs.matches(product) && rhs.matches(product)
+        case .or(let lhs, let rhs): lhs.matches(product) || rhs.matches(product)
+        }
+    }
+}
+
+let filter = Filter.and(.tag("wireless"), .or(.maxPrice(500), .tag("sale")))
+let headphones = Product(price: 900, tags: ["wireless", "sale"])
+print(filter.matches(headphones))    // true
+```
+
+### Case'siz enum ile namespace
+
+Hiç case'i olmayan bir enum'dan instance oluşturulamaz. Bu özellik, sabitleri ve static yardımcıları bir isim altında toplamak için kullanılır. Aynı iş için struct kullanılsaydı `APIConstants()` şeklinde anlamsız bir instance oluşturmak mümkün olurdu.
+
+```swift
+enum APIConstants {
+    static let baseURL = URL(string: "https://api.example.com")!
+    static let timeout: TimeInterval = 30
+    static let maxRetryCount = 3
+}
+```
+
+### Framework enum'ları ve @unknown default
+
+Apple framework'lerindeki bazı enum'lar ileride yeni case'ler alabilir (non-frozen). Bunlar üzerinde `switch` yazarken bilinen case'lerin hepsi yazılır ve sona `@unknown default` eklenir. Yeni bir SDK ile derlendiğinde eklenen case için derleyici uyarı verir, eski bir SDK'daki uygulama ise yeni case geldiğinde crash olmadan varsayılan dala düşer. `UNAuthorizationStatus` ve `AVAuthorizationStatus` gibi izin durumları tipik örneklerdir.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Raw value ile associated value arasındaki fark ne?</b></summary>
+
+Raw value her case'e derleme anında verilen sabit bir değerdir ve tüm case'lerde aynı tiptedir. API'den gelen string'leri enum'a çevirmek için kullanılır. Associated value ise instance oluşturulurken verilen ve case'e göre tipi değişebilen veridir. Bir ekranın `loaded([Item])` ya da `failed(Error)` gibi durumlarını modellemek için kullanılır. İkisi aynı enum'da birlikte kullanılamaz.
+</details>
+
+<details>
+<summary><b>Bir ekranın durumunu neden ayrı Bool ve optional property'ler yerine enum ile modellersin?</b></summary>
+
+Ayrı property'lerle "hem yükleniyor hem hata var" ya da "hata var ama veri de dolu" gibi geçersiz kombinasyonlar oluşabilir ve her yerde bunları kontrol etmek gerekir. Associated value'lu bir enum ile ekran aynı anda sadece tek bir durumda bulunabilir ve her durum kendi verisini taşır. `switch` ile tüm durumların ele alınması da derleyici tarafından garanti edilir.
+</details>
+
+<details>
+<summary><b>@unknown default ne zaman kullanılır?</b></summary>
+
+Apple framework'leri gibi ileride yeni case eklenebilecek enum'lar üzerinde `switch` yazarken kullanılır. Bilinen tüm case'ler yazılır, sona `@unknown default` eklenir. Yeni bir case eklendiğinde derleyici uyarı verir, ama uygulama çalışma anında crash olmadan varsayılan dala düşer.
+</details>
+
+<details>
+<summary><b>indirect ne işe yarar?</b></summary>
+
+Kendi tipini associated value olarak içeren recursive enum'larda kullanılır. Normalde enum'un boyutu derleme anında bilinmelidir. Kendini içeren bir case'in boyutu ise sonsuz olurdu. `indirect`, değeri ayrı bir bellek alanında saklayıp enum'da sadece ona referans tutarak bu sorunu çözer.
+</details>
+
+<details>
+<summary><b>Sabitleri gruplamak için neden struct değil de case'siz enum kullanılır?</b></summary>
+
+Case'i olmayan bir enum'dan instance oluşturulamaz, bu yüzden sadece bir namespace olarak kullanılabilir. Struct kullanılsaydı anlamsız bir instance oluşturmak mümkün olurdu. Bunu engellemek için `private init()` yazmak gerekirdi.
+</details>
+
+---
+
+## 9. Structures and Classes
+
+Struct ve class, property ve metotlarla kendi tiplerini tanımlamanın iki yoludur. İkisi de property, metot, subscript ve initializer tanımlayabilir, extension ile genişletilebilir ve protokollere uyabilir. Aralarındaki temel fark, struct'ın value type, class'ın reference type olmasıdır.
+
+### Sadece class'ta olanlar
+
+- Inheritance: bir class başka bir class'tan türeyebilir.
+- Type casting: bir instance'ın gerçek tipi çalışma anında kontrol edilebilir.
+- Deinitializer: instance bellekten silinmeden önce `deinit` çalışır.
+- Reference counting: bir instance'a birden fazla referans olabilir ve ARC bunları sayar.
+- Identity: iki referansın aynı nesneyi gösterip göstermediği `===` ile kontrol edilebilir.
+
+### Value semantics ve reference semantics
+
+Struct bir değişkene atandığında ya da fonksiyona verildiğinde kopyalanır. Kopyadaki değişiklik orijinali etkilemez. Class ise kopyalanmaz. Atanan şey aynı nesneye bir referanstır ve değişiklik o nesneyi gösteren herkese yansır.
+
+```swift
+struct DraftSettings {
+    var fontSize: Int
+}
+
+final class SharedSettings {
+    var fontSize: Int
+    init(fontSize: Int) { self.fontSize = fontSize }
+}
+
+var draftA = DraftSettings(fontSize: 14)
+var draftB = draftA
+draftB.fontSize = 18
+print(draftA.fontSize, draftB.fontSize)    // 14 18
+
+let sharedA = SharedSettings(fontSize: 14)
+let sharedB = sharedA
+sharedB.fontSize = 18
+print(sharedA.fontSize, sharedB.fontSize)  // 18 18
+print(sharedA === sharedB)                 // true
+```
+
+Bu fark, uygulamadaki birçok hatanın kaynağıdır. Bir ekranda düzenlenen nesne class ise, kullanıcı "İptal" dediğinde bile değişiklik listedeki orijinal nesneye yansımış olur. Struct ile düzenleme ekranı kendi kopyası üzerinde çalışır ve sadece "Kaydet" dendiğinde değer geri yazılır.
+
+> [!IMPORTANT]
+> `let` struct'ta ve class'ta farklı davranır. `let` ile tanımlanan bir struct'ın hiçbir property'si değiştirilemez, çünkü struct değerin kendisidir. `let` ile tanımlanan bir class instance'ında ise sadece referans sabittir. `var` property'ler değiştirilebilir. Yukarıdaki `sharedB` bu yüzden `let` olmasına rağmen güncellenebiliyor.
+
+### Memberwise initializer
+
+Struct'lar, tüm stored property'leri parametre olarak alan bir initializer'ı otomatik olarak alır. Varsayılan değeri olan property'ler bu initializer'da isteğe bağlı parametre olur. Class'larda böyle bir initializer yoktur, `init` elle yazılır.
+
+```swift
+struct APIRequest {
+    let path: String
+    var method = "GET"
+    var headers: [String: String] = [:]
+}
+
+let profile = APIRequest(path: "/me")
+let update = APIRequest(path: "/me", method: "PATCH", headers: ["Content-Type": "application/json"])
+```
+
+> [!NOTE]
+> Struct'a kendi `init`'ini yazdığında memberwise initializer kaybolur. İkisini birlikte kullanmak istiyorsan özel `init`'i bir extension içine yazarsın (bkz. [Initialization](#14-initialization)).
+
+### Struct mı class mı
+
+Apple'ın önerisi varsayılan olarak struct kullanmaktır. Class'a ancak gerçekten class'a özel bir özellik gerektiğinde geçilir.
+
+| Durum | Tercih | Gerekçe |
+|---|---|---|
+| Veri modeli (`User`, `Order`, API DTO'su) | struct | Bağımsız kopyalar, beklenmedik paylaşım yok, otomatik `Equatable`/`Codable`/memberwise init |
+| Kimliği önemli, paylaşılan ve değişen durum (oturum yöneticisi, cache) | class | Herkes aynı nesneyi görmeli |
+| Yaşam döngüsü önemli (`deinit` ile kaynak bırakma) | class | Struct'ta `deinit` yoktur |
+| UIKit'ten türeme (`UIViewController`) ya da Objective-C uyumluluğu | class | Inheritance ve `NSObject` gerekir |
+| SwiftUI'da gözlemlenen model (`@Observable`) | class | Macro sadece class'lara uygulanır |
+| SwiftUI view'ları | struct | Hafif, sık oluşturulup atılan değerler |
+
+> [!TIP]
+> Bir class'tan türetme yapılmayacaksa `final` olarak işaretlenir. `final`, niyeti açıkça belirtir ve derleyicinin metot çağrılarını dinamik dispatch yerine doğrudan çağrıya çevirmesine (static dispatch) izin verir.
+
+### Değişikliğin yayılması
+
+Bir struct, başka bir struct'ın ya da dizinin içindeyse ve bir property'si değiştirilirse, değişiklik dıştaki değere de yansır. Çünkü değiştirilen şey zaten dıştaki değerin bir parçasıdır.
+
+```swift
+struct CartItem {
+    let sku: String
+    var quantity: Int
+}
+
+var items = [CartItem(sku: "KB-01", quantity: 1)]
+items[0].quantity += 1         // dizideki eleman yerinde güncellenir
+print(items[0].quantity)       // 2
+
+var copy = items[0]
+copy.quantity = 10             // sadece kopya değişir
+print(items[0].quantity)       // 2
+```
+
+> [!WARNING]
+> `for item in items { item.quantity += 1 }` derlenmez, çünkü döngü değişkeni her elemanın sabit bir kopyasıdır. Dizideki struct'ları güncellemek için index üzerinden gidilir (`for index in items.indices { items[index].quantity += 1 }`) ya da `map` ile yeni dizi oluşturulur.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Struct ve class arasındaki farklar neler?</b></summary>
+
+Struct value type'tır, atandığında ya da fonksiyona verildiğinde kopyalanır. Class reference type'tır ve atandığında aynı nesneye yeni bir referans oluşturulur. Sadece class'larda olan özellikler: inheritance, type casting, `deinit`, ARC ile reference counting ve `===` ile identity kontrolü. Struct'lar otomatik memberwise initializer alır. `let` ile tanımlanan struct tamamen değişmezdir, class'ta ise sadece referans sabittir. Struct'ta değişiklik yapan metotlar `mutating` olarak işaretlenir.
+</details>
+
+<details>
+<summary><b>Bir model için struct mı class mı seçersin, neden?</b></summary>
+
+Varsayılan olarak struct seçerim. Value semantics sayesinde bir değeri değiştirdiğimde başka bir yerin beklenmedik şekilde etkilenmeyeceğini bilirim. Bu, özellikle birden fazla thread'in aynı veriyle çalıştığı durumlarda büyük avantajdır. Class'ı şu durumlarda seçerim: nesnenin kimliği önemliyse ve birden fazla yer aynı değişen durumu görmeliyse (oturum yöneticisi gibi), `deinit` ile yaşam döngüsünü yönetmem gerekiyorsa, UIKit'ten türetme ya da Objective-C uyumluluğu gerekiyorsa ya da SwiftUI'da `@Observable` kullanacaksam.
+</details>
+
+<details>
+<summary><b>Struct her zaman stack'te, class her zaman heap'te mi tutulur?</b></summary>
+
+Bu yaygın bir basitleştirmedir ama tam doğru değildir. Class instance'ları heap'te tutulur. Struct'lar ise genellikle stack'te tutulur ama bir closure tarafından yakalandığında, `any` ile bir existential kutusuna konduğunda ya da `Array` gibi heap'te depolama kullanan bir tipin içinde olduğunda heap'e taşınabilir. Asıl fark bellekte nerede durduklarından çok semantiktedir: value semantics ile reference semantics.
+</details>
+
+<details>
+<summary><b>== ile === arasındaki fark ne?</b></summary>
+
+`==` iki değerin eşit olup olmadığını kontrol eder ve tipin `Equatable`'a uymasını gerektirir. Eşitliğin ne anlama geldiğini tip kendisi tanımlar. `===` sadece class instance'larında çalışır ve iki referansın bellekteki aynı nesneyi gösterip göstermediğini kontrol eder.
+</details>
+
+<details>
+<summary><b>final anahtar kelimesi ne işe yarar?</b></summary>
+
+Bir class'ın alt sınıfının oluşturulmasını ya da bir metodun override edilmesini engeller. Niyeti açıkça belirtir. Ayrıca derleyici, override edilemeyeceğini bildiği metotları dinamik dispatch yerine doğrudan çağırabilir, bu da küçük bir performans kazancı sağlar.
+</details>
+
+<details>
+<summary><b>SwiftUI view'ları neden struct?</b></summary>
+
+SwiftUI'da view'lar, ekranın o anki durumunun hafif bir tarifidir. Durum her değiştiğinde yeniden oluşturulurlar. Struct'lar ucuzdur, inheritance yükü taşımaz ve value semantics sayesinde SwiftUI eski ve yeni tarifi karşılaştırıp sadece değişen kısmı güncelleyebilir. Değişen durum ise view'da değil, `@State` ya da `@Observable` bir model gibi SwiftUI'ın yönettiği depolama alanında tutulur.
+</details>
