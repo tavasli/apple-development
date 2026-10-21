@@ -2736,3 +2736,780 @@ Bir class instance'ına olan güçlü referans sayısı sıfıra düştüğünde
 
 ARC'ın otomatik olarak bırakamadığı kaynaklar temizlenir: `NotificationCenter` observer'larını kaldırmak, bir `Timer`'ı geçersiz kılmak, dosya ya da soket bağlantısını kapatmak, bir aboneliği iptal etmek. Ayrıca debug sırasında bir nesnenin bellekten silinip silinmediğini kontrol etmek için log yazılır.
 </details>
+
+---
+
+## 16. Optional Chaining
+
+Optional chaining, optional olabilecek bir değer üzerinden property, metot ya da subscript'e erişmeyi sağlar. Zincirdeki herhangi bir halka `nil` ise zincirin geri kalanı çalışmaz ve tüm ifade `nil` döner. Force unwrap'ten farkı, `nil` durumunda crash olmak yerine sessizce `nil` üretmesidir.
+
+```swift
+struct Address {
+    var city: String
+    var postalCode: String?
+}
+
+struct Customer {
+    var name: String
+    var address: Address?
+}
+
+struct Order {
+    var customer: Customer?
+}
+
+let order = Order(customer: Customer(name: "Ada", address: nil))
+
+let city = order.customer?.address?.city
+print(city ?? "No city")    // No city
+```
+
+### Sonuç her zaman optional'dır
+
+Zincirin sonundaki değer optional olmasa bile sonuç optional olur, çünkü zincir herhangi bir noktada kesilebilir. `city` property'si `String` tipindedir ama `order.customer?.address?.city` ifadesinin tipi `String?`'dir. Zincir birden fazla optional'dan geçse de sonuç tek katmanlı optional olur, `String??` olmaz.
+
+### Metot çağrısı ve atama
+
+Optional chaining ile metot çağrılabilir. Dönüş tipi `Void` olan bir metot zincir üzerinden çağrıldığında sonuç `Void?` olur. Bu değer, çağrının gerçekten yapılıp yapılmadığını anlamak için `nil` ile karşılaştırılabilir.
+
+Zincir üzerinden atama da yapılabilir. Zincir `nil`'e takılırsa atama yapılmaz ve eşittir işaretinin sağ tarafı hiç değerlendirilmez.
+
+```swift
+final class SessionStore {
+    var currentUser: UserProfile?
+}
+
+final class UserProfile {
+    var displayName: String
+    init(displayName: String) { self.displayName = displayName }
+
+    func signOut() {
+        print("\(displayName) signed out")
+    }
+}
+
+let store = SessionStore()
+store.currentUser?.displayName = "Guest"           // kullanıcı yok, atama yapılmaz
+
+if store.currentUser?.signOut() == nil {
+    print("Nobody to sign out")                    // Nobody to sign out
+}
+
+store.currentUser = UserProfile(displayName: "Ada")
+store.currentUser?.signOut()                       // Ada signed out
+```
+
+> [!WARNING]
+> Zincir üzerinden yapılan bir atamanın gerçekleşmemesi hiçbir uyarı üretmez. `store.currentUser?.displayName = "Guest"` satırı kullanıcı `nil` iken sessizce hiçbir şey yapmaz. Atamanın mutlaka gerçekleşmesi gerekiyorsa `guard let` ile değer açılır ve yokluk ayrıca ele alınır.
+
+### Subscript ve optional dönüş
+
+Optional bir değerin subscript'ine `?` ile erişilir. Subscript'in kendisi optional döndürüyorsa (sözlükte olduğu gibi), `?` subscript'ten sonra yazılarak sonucun üzerinden zincire devam edilir.
+
+```swift
+let featureConfig: [String: [String]]? = ["beta": ["darkMode", "newSearch"]]
+
+let firstBetaFeature = featureConfig?["beta"]?.first
+print(firstBetaFeature ?? "none")    // darkMode
+```
+
+### Mülakat soruları
+
+<details>
+<summary><b>Optional chaining ile force unwrap arasındaki fark ne?</b></summary>
+
+Force unwrap (`!`) değer `nil` ise programı crash ettirir. Optional chaining (`?`) ise `nil` ile karşılaştığında zincirin geri kalanını çalıştırmaz ve tüm ifadenin sonucu olarak `nil` döndürür. Bu yüzden optional chaining'in sonucu, zincirin sonundaki değer optional olmasa bile her zaman optional'dır.
+</details>
+
+<details>
+<summary><b>a?.b?.c ifadesinde c optional değilse sonucun tipi nedir?</b></summary>
+
+`c`'nin tipi `T` ise sonuç `T?` olur. Zincir kaç optional'dan geçerse geçsin sonuç tek katmanlı optional'dır. `c`'nin kendisi `T?` ise sonuç yine `T?` olur, `T??` olmaz.
+</details>
+
+---
+
+## 17. Error Handling
+
+Swift'te hatalar, `Error` protokolüne uyan tiplerle temsil edilir. Bir fonksiyon hata fırlatabiliyorsa imzasında `throws` yazar. Çağıran taraf `try` yazmak zorundadır, bu sayede hata fırlatabilecek her çağrı kodda görünür. Swift'in hata mekanizması exception'lara benzer bir söz dizimi kullanır ama stack unwinding gibi pahalı işlemler yapmaz. Bir hata fırlatmak, performans açısından bir değer döndürmekle benzerdir.
+
+### Hata tipini tanımlamak
+
+Hatalar genellikle enum ile modellenir. Her case bir hata durumunu, associated value'lar ise hatanın ayrıntılarını taşır.
+
+```swift
+enum CheckoutError: Error {
+    case emptyCart
+    case outOfStock(sku: String)
+    case paymentDeclined(reason: String)
+}
+```
+
+Kullanıcıya gösterilecek mesajlar için `LocalizedError` protokolüne uyulur. `localizedDescription` property'si bu durumda `errorDescription`'ı döndürür.
+
+```swift
+enum UploadError: LocalizedError {
+    case fileTooLarge(limitMB: Int)
+    case unsupportedFormat(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .fileTooLarge(let limit): "File must be smaller than \(limit) MB."
+        case .unsupportedFormat(let ext): "\(ext.uppercased()) files are not supported."
+        }
+    }
+}
+
+let error: Error = UploadError.fileTooLarge(limitMB: 25)
+print(error.localizedDescription)    // File must be smaller than 25 MB.
+```
+
+### Hata fırlatmak ve iletmek
+
+`throws` ile işaretlenen fonksiyon `throw` ile hata fırlatır. İçinde başka bir throwing fonksiyonu `try` ile çağırır ve hatayı yakalamazsa, hata otomatik olarak çağırana iletilir (propagation).
+
+```swift
+struct InventoryService {
+    let stock: [String: Int]
+
+    func reserve(sku: String, quantity: Int) throws {
+        guard let available = stock[sku], available >= quantity else {
+            throw CheckoutError.outOfStock(sku: sku)
+        }
+    }
+}
+
+struct CheckoutService {
+    let inventory: InventoryService
+
+    func checkout(cart: [String: Int]) throws -> String {
+        guard !cart.isEmpty else { throw CheckoutError.emptyCart }
+        for (sku, quantity) in cart {
+            try inventory.reserve(sku: sku, quantity: quantity)    // hata yakalanmaz, yukarı iletilir
+        }
+        return "ORD-1001"
+    }
+}
+```
+
+### do-catch
+
+Hata `do-catch` ile yakalanır. `catch` blokları yukarıdan aşağıya kontrol edilir ve pattern ile eşleşen ilk blok çalışır. Pattern'siz `catch` her hatayı yakalar ve hata `error` adıyla gelir.
+
+```swift
+let service = CheckoutService(inventory: InventoryService(stock: ["KB-01": 3, "MS-07": 0]))
+
+do {
+    let orderID = try service.checkout(cart: ["MS-07": 1])
+    print("Order placed: \(orderID)")
+} catch CheckoutError.outOfStock(let sku) {
+    print("\(sku) is out of stock")             // MS-07 is out of stock
+} catch CheckoutError.emptyCart {
+    print("Your cart is empty")
+} catch {
+    print("Unexpected error: \(error)")
+}
+```
+
+### try, try? ve try!
+
+| Yazım | Hata olursa | Ne zaman |
+|---|---|---|
+| `try` | Hata `catch`'e ya da çağırana iletilir | Hatanın nedeni önemliyse, kullanıcıya gösterilecek ya da farklı ele alınacaksa |
+| `try?` | Sonuç `nil` olur, hata bilgisi kaybolur | Başarısızlığın nedeni önemli değilse. Örnek: cache'ten okuma, okunamazsa ağdan çekilir |
+| `try!` | Program crash olur | Sadece hata olmasının programcı hatası anlamına geldiği yerlerde. Örnek: uygulama paketindeki bir dosyayı ya da sabit bir regex'i yüklemek |
+
+```swift
+func loadCachedProfile(from data: Data?) -> [String: String]? {
+    guard let data else { return nil }
+    return try? JSONDecoder().decode([String: String].self, from: data)
+}
+
+print(loadCachedProfile(from: Data("not json".utf8)) == nil)    // true
+```
+
+> [!CAUTION]
+> `try!` force unwrap ile aynı risk sınıfındadır. Ağdan, diskten ya da kullanıcıdan gelen verinin işlenmesinde asla kullanılmaz.
+
+### defer ile temizlik
+
+Throwing bir fonksiyonda hangi satırda hata fırlatılırsa fırlatılsın yapılması gereken işler `defer` ile yazılır. Ayrıntılar [Control Flow](#5-control-flow) bölümündedir.
+
+### Typed throws
+
+Swift 6 ile bir fonksiyonun hangi hata tipini fırlatacağı imzada belirtilebilir: `throws(CheckoutError)`. Bu durumda `catch` bloğundaki `error` değeri `any Error` değil, doğrudan `CheckoutError` tipindedir ve `switch` ile tüm case'ler eksiksiz ele alınabilir.
+
+```swift
+func validateCart(_ cart: [String: Int]) throws(CheckoutError) {
+    if cart.isEmpty { throw .emptyCart }
+}
+
+do {
+    try validateCart([:])
+} catch {
+    switch error {
+    case .emptyCart: print("Add something first")
+    case .outOfStock, .paymentDeclined: print("Other checkout error")
+    }
+}
+```
+
+> [!TIP]
+> Typed throws, hata kümesinin kapalı ve sabit olduğu yerlerde kullanılır: bir modülün iç fonksiyonları ya da gömülü sistemler gibi. Public API'lerde genellikle düz `throws` tercih edilir. Hata tipini imzaya yazmak, ileride yeni bir hata türü eklemeyi API'yi kıran bir değişikliğe dönüştürür.
+
+### Result
+
+`Result<Success, Failure>`, bir işlemin başarılı sonucunu ya da hatasını tek bir değer olarak taşır. async/await öncesinde completion handler'larda yaygın olarak kullanılırdı. Hâlâ bir sonucu saklamak ya da başka bir yere iletmek gerektiğinde kullanışlıdır. `get()` metodu ile tekrar `throws` dünyasına dönülür.
+
+```swift
+func parsePort(_ text: String) -> Result<Int, URLError> {
+    guard let port = Int(text), (1...65_535).contains(port) else {
+        return .failure(URLError(.badURL))
+    }
+    return .success(port)
+}
+
+switch parsePort("8080") {
+case .success(let port): print("Port \(port)")    // Port 8080
+case .failure(let error): print(error.code)
+}
+
+let port = try? parsePort("99999").get()
+print(port ?? -1)    // -1
+```
+
+### rethrows
+
+Parametre olarak closure alan bir fonksiyon, sadece closure hata fırlattığında hata fırlatıyorsa `rethrows` olarak işaretlenir. `map` ve `filter` bu şekilde tanımlıdır. Throwing olmayan bir closure verildiğinde çağıranın `try` yazmasına gerek kalmaz.
+
+### Mülakat soruları
+
+<details>
+<summary><b>try, try? ve try! arasındaki farkı ve her birini ne zaman kullandığını anlatır mısın?</b></summary>
+
+`try` ile hata ya `do-catch` ile yakalanır ya da fonksiyon `throws` olduğu için çağırana iletilir. Hatanın nedeni önemliyse, örneğin kullanıcıya bir mesaj gösterilecekse kullanılır. `try?` hata olursa `nil` döndürür ve hata bilgisini atar. Başarısızlığın nedeni önemli olmadığında kullanılır, örneğin cache'ten okuma başarısızsa ağdan çekilir. `try!` hata olursa crash olur. Sadece hata olmasının programcı hatası anlamına geldiği yerlerde, örneğin uygulama paketindeki bir dosyayı yüklerken kullanılır.
+</details>
+
+<details>
+<summary><b>Optional döndürmek ile hata fırlatmak arasında nasıl seçim yaparsın?</b></summary>
+
+Değerin yokluğu normal bir durumsa ve tek bir anlamı varsa optional döndürürüm. `Int("abc")` ya da bir sözlükte anahtar aramak buna örnektir. Başarısızlığın birden fazla nedeni olabiliyorsa ve çağıranın bu nedene göre farklı davranması gerekiyorsa hata fırlatırım. Ağ isteği, dosya okuma ve doğrulama işlemleri buna örnektir.
+</details>
+
+<details>
+<summary><b>Result tipi ne işe yarar, async/await ile hâlâ gerekli mi?</b></summary>
+
+Başarılı sonucu ya da hatayı tek bir değer olarak taşır. async/await öncesinde completion handler'larda, hem değer hem hata için iki ayrı optional parametre kullanmanın yarattığı belirsizliği ortadan kaldırmak için kullanılırdı. async/await ile çoğu durumda doğrudan `throws` kullanılır. Ancak bir sonucu saklamak, bir koleksiyonda tutmak ya da ileride işlemek üzere başka bir yere iletmek gerektiğinde `Result` hâlâ kullanışlıdır.
+</details>
+
+<details>
+<summary><b>Typed throws nedir, her yerde kullanmalı mıyız?</b></summary>
+
+Swift 6 ile gelen, fonksiyonun hangi hata tipini fırlatacağını imzada belirtme özelliğidir: `throws(MyError)`. `catch` içinde hata doğrudan o tipte gelir ve eksiksiz `switch` yazılabilir. Her yerde kullanılmamalıdır. Hata kümesinin kapalı olduğu iç kodlarda faydalıdır. Public API'lerde ise yeni bir hata türü eklemek API'yi kıran bir değişiklik haline gelir, bu yüzden düz `throws` tercih edilir.
+</details>
+
+<details>
+<summary><b>rethrows ne demek?</b></summary>
+
+Fonksiyonun kendisi hata üretmez, sadece parametre olarak aldığı closure hata fırlatırsa onu iletir anlamına gelir. `map` ve `filter` `rethrows` olarak tanımlıdır. Throwing olmayan bir closure verildiğinde çağrıda `try` yazmak gerekmez.
+</details>
+
+---
+
+## 18. Concurrency
+
+Swift'in yerleşik concurrency modeli asenkron kodu `async` ve `await` ile, paralel işleri `async let` ve task group'larla, paylaşılan durumu ise actor'larla yönetir. Swift 6 dil modunda derleyici, data race oluşturabilecek kodu derleme anında yakalar. Bu bölüm konunun özetidir. Pratikteki ayrıntılar networking ve SwiftData ile birlikte ele alınır.
+
+### async ve await
+
+`async` ile işaretlenen bir fonksiyon çalışırken askıya alınabilir (suspend). Askıya alınma, thread'i bloke etmez. Fonksiyon beklerken thread başka işleri yürütür, sonuç hazır olduğunda fonksiyon kaldığı yerden devam eder. `await`, bir askıya alınma noktasını işaretler.
+
+```swift
+struct Article: Decodable {
+    let id: Int
+    let title: String
+}
+
+enum APIError: Error {
+    case badStatus(Int)
+}
+
+func fetchArticles(from url: URL) async throws -> [Article] {
+    let (data, response) = try await URLSession.shared.data(from: url)
+    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        throw APIError.badStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
+    }
+    return try JSONDecoder().decode([Article].self, from: data)
+}
+```
+
+> [!IMPORTANT]
+> `await`, "burada thread bekletilir" anlamına gelmez. "Burada fonksiyon askıya alınabilir ve devam ettiğinde farklı bir thread'de olabilir" anlamına gelir. Bu yüzden bir `await` öncesinde okunan durum, `await` sonrasında değişmiş olabilir.
+
+### Task
+
+Senkron bir bağlamdan async bir fonksiyon çağırmak için `Task` oluşturulur. SwiftUI'da bunun yerine genellikle `.task` modifier'ı kullanılır. Bu modifier view kaybolduğunda task'i otomatik olarak iptal eder.
+
+```swift
+func loadInitialContent() async -> String {
+    "Welcome"
+}
+
+let task = Task {
+    let message = await loadInitialContent()
+    print(message)
+}
+await task.value
+```
+
+`Task { }` içinde başlatılan iş, oluşturulduğu actor bağlamını miras alır. Bağlamdan tamamen bağımsız bir iş için `Task.detached` vardır ama nadiren gerekir.
+
+### Paralel çalıştırma: async let ve task group
+
+Sırayla yazılan `await`'ler işleri sırayla yürütür. Birbirinden bağımsız işler `async let` ile aynı anda başlatılabilir.
+
+```swift
+func fetchProfile() async -> String { "Ada" }
+func fetchNotifications() async -> Int { 3 }
+
+func loadDashboard() async -> String {
+    async let profile = fetchProfile()
+    async let unread = fetchNotifications()
+    return "\(await profile), \(await unread) unread"    // ikisi de aynı anda çalışır
+}
+
+print(await loadDashboard())    // Ada, 3 unread
+```
+
+Sayısı çalışma anında belli olan işler için `withTaskGroup` ya da `withThrowingTaskGroup` kullanılır.
+
+```swift
+func fetchThumbnailSize(id: Int) async -> Int {
+    id * 1_024
+}
+
+func totalThumbnailSize(ids: [Int]) async -> Int {
+    await withTaskGroup(of: Int.self) { group in
+        for id in ids {
+            group.addTask { await fetchThumbnailSize(id: id) }
+        }
+        var total = 0
+        for await size in group {
+            total += size
+        }
+        return total
+    }
+}
+
+print(await totalThumbnailSize(ids: [1, 2, 3]))    // 6144
+```
+
+`async let` ve task group ile oluşturulan task'ler structured concurrency'nin parçasıdır. Ebeveyn task iptal edilirse çocuklar da iptal edilir, ebeveyn bitmeden önce tüm çocukların bitmesi beklenir.
+
+### Cancellation
+
+Swift'te iptal işlemi kooperatiftir. Bir task iptal edildiğinde zorla durdurulmaz, sadece iptal edildi olarak işaretlenir. Uzun süren işler bu durumu `Task.checkCancellation()` ya da `Task.isCancelled` ile kontrol etmelidir. `URLSession` gibi sistem API'leri iptali kendileri kontrol eder.
+
+### Actors
+
+Actor, kendi durumuna aynı anda sadece tek bir işin erişmesini garanti eden bir reference type'tır. Paylaşılan ve değişen durumu korumak için kullanılır. Actor'un dışından property ve metotlarına erişim `await` ile yapılır, çünkü erişim sırasında başka bir işin bitmesini beklemek gerekebilir.
+
+```swift
+actor ImageCache {
+    private var storage: [URL: Data] = [:]
+
+    func image(for url: URL) -> Data? {
+        storage[url]
+    }
+
+    func store(_ data: Data, for url: URL) {
+        storage[url] = data
+    }
+}
+
+let cache = ImageCache()
+let avatarURL = URL(string: "https://cdn.example.com/a.png")!
+await cache.store(Data([0x1]), for: avatarURL)
+print(await cache.image(for: avatarURL)?.count ?? 0)    // 1
+```
+
+> [!WARNING]
+> Actor reentrancy: bir actor metodu içinde `await` olduğunda metot askıya alınır ve bu sırada aynı actor'a gelen başka çağrılar çalışabilir. `await` öncesinde kontrol edilen bir koşul, `await` sonrasında artık geçerli olmayabilir. Örneğin cache'te değer yok diye başlatılan bir indirme, beklerken başka bir çağrı tarafından da başlatılmış olabilir.
+
+### MainActor
+
+`@MainActor`, kodun main thread'de çalışmasını garanti eden global actor'dur. UI'ı güncelleyen her şey main actor'da çalışmalıdır. SwiftUI view'ları ve UIKit sınıfları zaten `@MainActor` olarak işaretlidir. ViewModel'ler de genellikle `@MainActor` ile işaretlenir.
+
+```swift
+@MainActor
+final class ArticleListViewModel {
+    private(set) var titles: [String] = []
+    private(set) var isLoading = false
+
+    func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        titles = await fetchTitles()
+    }
+
+    private nonisolated func fetchTitles() async -> [String] {
+        ["Swift 6", "SwiftData"]
+    }
+}
+
+let listViewModel = ArticleListViewModel()
+await listViewModel.load()
+print(listViewModel.titles)    // ["Swift 6", "SwiftData"]
+```
+
+### Sendable
+
+`Sendable`, bir değerin concurrency sınırları arasında (task'ler ve actor'lar arasında) güvenle geçirilebileceğini belirten protokoldür. Sadece `Sendable` property'leri olan struct ve enum'lar otomatik olarak `Sendable` olur. Actor'lar her zaman `Sendable`'dır. Değişebilen durumu olan class'lar ise genellikle `Sendable` değildir. Swift 6 dil modunda `Sendable` olmayan bir değeri başka bir concurrency alanına geçirmek derleme hatasıdır.
+
+> [!TIP]
+> Concurrency ile ilgili derleyici hatalarının çoğu üç kalıptan biriyle çözülür: veriyi value type (struct) yapmak, paylaşılan değişen durumu bir actor'a taşımak ya da UI ile ilgili kodu `@MainActor`'a bağlamak. `@unchecked Sendable` ve `nonisolated(unsafe)` derleyicinin kontrolünü kapatır ve sadece güvenliği başka bir yolla (örneğin bir kilitle) sağlanmış kodda kullanılır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>async/await, completion handler'lara göre ne kazandırır?</b></summary>
+
+Asenkron kod yukarıdan aşağıya, senkron kod gibi okunur. İç içe callback'ler (callback hell) oluşmaz. Hata yönetimi `throws` ve `do-catch` ile doğal şekilde yapılır. Completion handler'da bir yolda handler'ı çağırmayı unutmak mümkündü, async fonksiyon ise her yolda ya değer döndürmek ya da hata fırlatmak zorundadır. Ayrıca iptal ve öncelik bilgisi structured concurrency ile otomatik olarak yayılır.
+</details>
+
+<details>
+<summary><b>await yazılan satırda thread bloke olur mu?</b></summary>
+
+Hayır. Fonksiyon askıya alınır ve thread başka işleri yürütmek için serbest kalır. Sonuç hazır olduğunda fonksiyon kaldığı yerden, muhtemelen farklı bir thread'de devam eder. Bu yüzden `await` öncesinde okunan durum, sonrasında değişmiş olabilir.
+</details>
+
+<details>
+<summary><b>Actor nedir, class'tan farkı ne?</b></summary>
+
+Actor da class gibi bir reference type'tır ama kendi değişen durumuna aynı anda sadece bir işin erişmesini garanti eder. Böylece data race derleme anında engellenir. Dışarıdan erişim `await` ile yapılır. Actor'larda inheritance yoktur. Dikkat edilmesi gereken nokta reentrancy'dir: actor metodu `await` ile askıya alındığında başka çağrılar araya girebilir.
+</details>
+
+<details>
+<summary><b>@MainActor ne işe yarar?</b></summary>
+
+İşaretlenen kodun main thread'de çalışmasını garanti eder. UI güncellemeleri main thread'de yapılmak zorunda olduğu için ViewModel'ler ve UI ile etkileşen kodlar `@MainActor` ile işaretlenir. Derleyici, başka bir bağlamdan bu koda erişirken `await` yazılmasını zorunlu tutar.
+</details>
+
+<details>
+<summary><b>async let ile Task arasındaki fark ne?</b></summary>
+
+`async let` structured concurrency'nin parçasıdır. Oluşturulan iş, bulunduğu kapsama bağlıdır, kapsam bitmeden beklenir ve ebeveyn iptal edilirse o da iptal edilir. `Task { }` ise unstructured bir task oluşturur. Kendi yaşam döngüsü vardır ve iptal edilmesi gerekiyorsa referansı saklanıp elle `cancel()` çağrılır. Birbirinden bağımsız birkaç işi aynı anda başlatıp sonuçlarını birleştirmek için `async let`, senkron bir bağlamdan async iş başlatmak için `Task` kullanılır.
+</details>
+
+<details>
+<summary><b>Sendable nedir?</b></summary>
+
+Bir değerin farklı task'ler ya da actor'lar arasında güvenle paylaşılabileceğini belirten protokoldür. `Sendable` property'leri olan struct ve enum'lar otomatik olarak `Sendable` olur. Actor'lar her zaman `Sendable`'dır. Değişebilen durumu olan class'lar genellikle değildir. Swift 6'da `Sendable` olmayan bir değeri concurrency sınırının öbür tarafına geçirmek derleme hatasıdır.
+</details>
+
+---
+
+## 19. Macros
+
+Macro, derleme sırasında kaynak koda yeni kod ekleyen bir yapıdır. Tekrar eden kalıpları elle yazmak yerine derleyicinin üretmesini sağlar. Macro'lar sadece kod ekler, mevcut kodu silmez ya da değiştirmez. Üretilen kod da normal kod gibi tip kontrolünden geçer.
+
+İki tür macro vardır:
+
+| Tür | Yazım | Ne yapar | Örnek |
+|---|---|---|---|
+| Freestanding | `#` ile başlar | Kendi başına bir ifade ya da bildirim üretir | `#Preview`, `#warning`, `#Predicate`, `#expect` |
+| Attached | `@` ile başlar | Bağlandığı bildirime üye, extension ya da protokol uyumu ekler | `@Observable`, `@Model`, `@Test` |
+
+```swift
+func legacyCheckout() {
+    #warning("Remove after the new payment flow ships")
+}
+```
+
+### Sık karşılaşılan macro'lar
+
+- `@Observable` (Observation): Class'ın property'lerini gözlemlenebilir yapar. SwiftUI, bir view'ın hangi property'leri okuduğunu takip eder ve sadece onlar değiştiğinde view'ı günceller. `ObservableObject` ve `@Published` kullanımının yerini almıştır.
+- `@Model` (SwiftData): Bir class'ı kalıcı olarak saklanabilen bir modele dönüştürür.
+- `#Preview`: Xcode'da SwiftUI ya da UIKit önizlemesi tanımlar.
+- `@Test` ve `#expect` (Swift Testing): Test fonksiyonu tanımlar ve beklenti kontrol eder.
+
+> [!NOTE]
+> Xcode'da bir macro'nun üzerine sağ tıklayıp "Expand Macro" seçildiğinde ürettiği kod görülebilir. `@Observable`'ın property'leri nasıl değiştirdiğini görmek, SwiftUI'ın gözlem mekanizmasını anlamanın en hızlı yoludur.
+
+Kendi macro'nu yazmak ayrı bir Swift package ve SwiftSyntax kütüphanesi gerektirir. Günlük uygulama geliştirmede genellikle hazır macro'lar kullanılır.
+
+> [!WARNING]
+> Property wrapper ile macro karıştırılmamalıdır. Property wrapper (`@State`, `@Published`) çalışma anında bir sarmalayıcı tip üzerinden çalışır. Attached macro (`@Observable`) ise derleme anında kod üretir. Her ikisi de `@` ile yazıldığı için ilk bakışta benzer görünürler. `@escaping` gibi attribute'lar ise ikisinden de farklıdır, derleyiciye sadece bilgi verir ve kod üretmez.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Macro nedir, property wrapper'dan farkı ne?</b></summary>
+
+Macro derleme anında kaynak koda yeni kod ekler. Üretilen kod tip kontrolünden geçer ve Xcode'da açılıp görülebilir. Property wrapper ise çalışma anında, property'nin değerini bir sarmalayıcı tip üzerinden saklayarak çalışır. `@Observable` bir macro'dur ve class'a gözlem kodunu derleme anında ekler. `@Published` ise bir property wrapper'dır.
+</details>
+
+<details>
+<summary><b>@Observable, ObservableObject'e göre ne kazandırır?</b></summary>
+
+`ObservableObject` ile her `@Published` property değiştiğinde, o nesneyi gözlemleyen tüm view'lar güncellenir. `@Observable` ile SwiftUI, her view'ın hangi property'leri gerçekten okuduğunu takip eder ve sadece o property'ler değiştiğinde view'ı günceller. Ayrıca `@Published` yazmaya gerek kalmaz ve view tarafında `@ObservedObject` yerine düz property ya da `@State` kullanılır.
+</details>
+
+---
+
+## 20. Type Casting
+
+Type casting, bir instance'ın tipini çalışma anında kontrol etmek ya da onu hiyerarşideki başka bir tip olarak ele almak için kullanılır. Class hiyerarşilerinde, protokol tiplerinde ve `Any` ile çalışırken gerekir.
+
+| Operatör | Ne yapar | Sonuç |
+|---|---|---|
+| `is` | Tip kontrolü yapar | `Bool` |
+| `as?` | Koşullu dönüşüm yapar | Optional, başarısızsa `nil` |
+| `as!` | Zorla dönüşüm yapar | Başarısızsa crash |
+| `as` | Derleme anında kesin olan dönüşüm (upcast, bridging) | Doğrudan değer |
+
+```swift
+class InboxItem {
+    let title: String
+    init(title: String) { self.title = title }
+}
+
+final class MessageItem: InboxItem {
+    let sender: String
+    init(title: String, sender: String) {
+        self.sender = sender
+        super.init(title: title)
+    }
+}
+
+final class SystemItem: InboxItem {}
+
+let inbox: [InboxItem] = [
+    MessageItem(title: "New message", sender: "Ada"),
+    SystemItem(title: "Update available"),
+    MessageItem(title: "Reply", sender: "Linus")
+]
+
+let messageCount = inbox.filter { $0 is MessageItem }.count
+print(messageCount)    // 2
+
+for notification in inbox {
+    if let message = notification as? MessageItem {
+        print("\(message.sender): \(message.title)")
+    }
+}
+```
+
+Koşullu dönüşümde dönüştürülen değere bir isim verilmesi gerekir. `if let message = notification as? MessageItem` doğru yazımdır.
+
+> [!WARNING]
+> `if let x is MessageItem` ve `if let x as? MessageItem` geçersiz yazımlardır. `is` sadece `Bool` üretir ve `if notification is MessageItem` şeklinde kullanılır. Dönüştürülmüş değere ihtiyaç varsa `if let message = notification as? MessageItem` yazılır.
+
+Birden fazla tipe göre farklı davranmak için `switch` içinde `case let x as Type` kalıbı kullanılır. Daha özel tipler daha genel olanlardan önce yazılır.
+
+```swift
+func icon(for notification: InboxItem) -> String {
+    switch notification {
+    case let message as MessageItem where message.sender == "Ada":
+        "star"
+    case is MessageItem:
+        "bubble"
+    case is SystemItem:
+        "gear"
+    default:
+        "bell"
+    }
+}
+
+print(inbox.map(icon))    // ["star", "gear", "bubble"]
+```
+
+### Any ve AnyObject
+
+`Any` fonksiyonlar dahil her tipten bir değeri, `AnyObject` ise sadece class instance'larını temsil eder. Tip bilgisi kaybolduğu için kullanmadan önce cast etmek gerekir. JSON'u `[String: Any]` olarak işlemek ya da Objective-C API'leriyle çalışmak gibi durumlarda karşılaşılır.
+
+> [!TIP]
+> `Any` yerine her zaman daha belirli bir tip tercih edilir. JSON için `Codable`, farklı tiplerdeki değerler için associated value'lu bir enum ya da bir protokol kullanmak, cast işlemlerini ve çalışma anı hatalarını ortadan kaldırır. `as!` ise sadece başarısızlığın programcı hatası olduğu yerlerde, örneğin `tableView.dequeueReusableCell(...) as! ProductCell` gibi kayıtlı bir hücreyi alırken kullanılır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>as, as? ve as! arasındaki fark ne?</b></summary>
+
+`as` derleme anında başarılı olacağı kesin olan dönüşümler içindir, örneğin bir subclass'ı superclass olarak ele almak (upcast). `as?` çalışma anında denenen koşullu dönüşümdür ve başarısızsa `nil` döner. `as!` zorla dönüşümdür ve başarısızsa crash olur. Sadece dönüşümün başarısızlığının programcı hatası olduğu yerlerde kullanılır.
+</details>
+
+<details>
+<summary><b>Switch'te type casting yaparken case'leri hangi sırayla yazarsın?</b></summary>
+
+Özelden genele doğru. `switch` eşleşen ilk case'i çalıştırır. Genel bir tip ya da koşulsuz bir case önce yazılırsa, daha özel case'lere hiç ulaşılmaz. Örneğin `where` koşullu bir case, aynı tipin koşulsuz case'inden önce gelmelidir.
+</details>
+
+<details>
+<summary><b>Any ile AnyObject arasındaki fark ne?</b></summary>
+
+`Any` struct, enum, class ve fonksiyonlar dahil her tipten değeri temsil edebilir. `AnyObject` sadece class instance'larını temsil eder. Protokollerde `AnyObject` kısıtı, protokolün sadece class'lar tarafından benimsenebileceğini belirtmek için kullanılır. Bu, delegate'lerin `weak` olarak tutulabilmesi için gereklidir.
+</details>
+
+---
+
+## 21. Nested Types
+
+Bir tip başka bir tipin içinde tanımlanabilir. İç tip, sadece dış tip bağlamında anlamlı olan kavramları gruplar ve isim çakışmalarını önler. Dışarıdan `DışTip.İçTip` şeklinde erişilir.
+
+```swift
+struct Payment {
+    enum Method: String {
+        case card, transfer, wallet
+    }
+
+    enum Status {
+        case pending
+        case completed(transactionID: String)
+        case failed(Failure)
+    }
+
+    struct Failure: Error {
+        let code: Int
+        let message: String
+    }
+
+    let amount: Decimal
+    let method: Method
+    var status: Status = .pending
+}
+
+var payment = Payment(amount: 250, method: .card)
+payment.status = .failed(Payment.Failure(code: 51, message: "Insufficient funds"))
+
+let preferred = Payment.Method(rawValue: "wallet")
+print(preferred == .wallet)    // true
+```
+
+`Payment.Status` adı, başka bir yerde tanımlanan `Order.Status` ya da `Shipment.Status` ile çakışmaz. Her biri kendi dış tipinin bağlamında anlam kazanır.
+
+> [!TIP]
+> Bir tip sadece başka bir tipin içinde kullanılıyorsa ve onun kavramsal bir parçasıysa iç içe tanımlanır. Birden fazla tip tarafından paylaşılıyorsa üst seviyede tanımlanır. Swift'in kendi API'lerinde de bu kalıp sık görülür: `String.Index`, `Dictionary.Keys`, `URLRequest.CachePolicy`.
+
+Bir tipin `CodingKeys` enum'u iç tip kullanımının en yaygın örneğidir.
+
+```swift
+struct Product: Decodable {
+    let id: Int
+    let displayName: String
+    let unitPrice: Decimal
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+        case unitPrice = "unit_price"
+    }
+}
+
+let data = Data(#"{"id": 7, "display_name": "Keyboard", "unit_price": 1200}"#.utf8)
+let product = try JSONDecoder().decode(Product.self, from: data)
+print(product.displayName)    // Keyboard
+```
+
+### Mülakat soruları
+
+<details>
+<summary><b>Nested type'ı ne zaman kullanırsın?</b></summary>
+
+Bir tip sadece başka bir tipin bağlamında anlamlıysa. Örneğin bir `Payment`'ın `Status`'u ya da bir modelin `CodingKeys`'i. Bu yaklaşım isim çakışmalarını önler (`Payment.Status` ile `Order.Status` ayrı kalır), ilişkiyi kodda açıkça gösterir ve global alanı kirletmez.
+</details>
+
+---
+
+## 22. Extensions
+
+Extension, var olan bir tipe yeni işlevsellik ekler. Kaynak koduna erişimin olmadığı tiplere, örneğin `String` ya da `Date` gibi standart kütüphane tiplerine de uygulanabilir.
+
+Extension ile eklenebilenler: computed property'ler, instance ve type metotları, yeni initializer'lar, subscript'ler, nested type'lar ve protokol uyumu.
+
+Extension ile eklenemeyenler: stored property'ler, property observer'lar, mevcut bir metodu override etmek ve class'lara designated initializer.
+
+### Mevcut tiplere işlev eklemek
+
+```swift
+extension Date {
+    func isSameDay(as other: Date, calendar: Calendar = .current) -> Bool {
+        calendar.isDate(self, inSameDayAs: other)
+    }
+}
+
+extension String {
+    var isValidEmail: Bool {
+        let parts = split(separator: "@")
+        return parts.count == 2 && parts[1].contains(".")
+    }
+}
+
+print("ada@example.com".isValidEmail)    // true
+print(Date().isSameDay(as: Date()))      // true
+```
+
+### Kodu organize etmek
+
+Extension'ların en yaygın kullanımlarından biri bir tipin kodunu mantıksal parçalara ayırmaktır. Her protokol uyumu ayrı bir extension'da yazılır. Böylece hangi metodun hangi protokole ait olduğu açıkça görülür.
+
+```swift
+struct Invoice {
+    let number: String
+    let total: Decimal
+}
+
+extension Invoice: CustomStringConvertible {
+    var description: String {
+        "Invoice \(number): \(total)"
+    }
+}
+
+extension Invoice: Equatable {}
+
+print(Invoice(number: "INV-7", total: 320))    // Invoice INV-7: 320
+```
+
+UIKit projelerinde `UITableViewDataSource` ve `UITableViewDelegate` metotlarının ayrı extension'larda toplanması bu kalıbın bilinen bir örneğidir.
+
+### Initializer eklemek
+
+Struct'a extension ile initializer eklemek memberwise initializer'ı korur (bkz. [Initialization](#14-initialization)). Class'lara extension ile sadece convenience initializer eklenebilir.
+
+### Constrained extensions
+
+`where` ile sadece belirli koşulları sağlayan tiplere uygulanan extension'lar yazılabilir.
+
+```swift
+extension Array where Element == Decimal {
+    var total: Decimal {
+        reduce(0, +)
+    }
+}
+
+let lineTotals: [Decimal] = [120, 80.5, 45]
+print(lineTotals.total)    // 245.5
+```
+
+> [!WARNING]
+> Extension'lar stored property ekleyemez. Bunun sebebi, bir tipin bellekteki boyutunun derleme anında sabit olması gerektiğidir. Başka bir modülde tanımlanmış bir tipe sonradan stored property eklemek bu boyutu değiştirirdi. Ek bir değer saklamak gerekiyorsa, tipi saran yeni bir tip yazılır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Extension ile neler eklenebilir, neler eklenemez?</b></summary>
+
+Computed property, metot, initializer, subscript, nested type ve protokol uyumu eklenebilir. Stored property, property observer ve class'lar için designated initializer eklenemez. Mevcut bir metot da extension ile override edilemez.
+</details>
+
+<details>
+<summary><b>Extension'lar neden stored property ekleyemez?</b></summary>
+
+Bir tipin bellekteki yerleşimi ve boyutu derleme anında belirlenir. Extension'lar başka modüllerde, tipin tanımından bağımsız olarak yazılabildiği için stored property eklemek, tipin bu yerleşimini sonradan değiştirmek anlamına gelirdi. Instance'ları zaten oluşturulmuş kodlar bu değişiklikten haberdar olamazdı.
+</details>
+
+<details>
+<summary><b>Protokol uyumlarını neden ayrı extension'larda yazarsın?</b></summary>
+
+Kod organizasyonu için. Her extension tek bir protokolün gereksinimlerini içerir. Böylece hangi metodun hangi protokol için yazıldığı açıkça görülür, dosyada gezinmek kolaylaşır ve bir protokol uyumu kaldırılmak istendiğinde tek bir blok silinir.
+</details>
