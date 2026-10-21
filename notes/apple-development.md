@@ -3513,3 +3513,971 @@ Bir tipin bellekteki yerleşimi ve boyutu derleme anında belirlenir. Extension'
 
 Kod organizasyonu için. Her extension tek bir protokolün gereksinimlerini içerir. Böylece hangi metodun hangi protokol için yazıldığı açıkça görülür, dosyada gezinmek kolaylaşır ve bir protokol uyumu kaldırılmak istendiğinde tek bir blok silinir.
 </details>
+
+---
+
+## 23. Protocols
+
+Protokol, bir tipin sahip olması gereken property, metot ve diğer gereksinimlerin tanımıdır. Implementasyon içermez, sadece sözleşmeyi belirler. Class, struct ve enum'lar protokollere uyabilir (conform). Swift'te soyutlama, test edilebilirlik ve kod paylaşımı büyük ölçüde protokoller üzerine kuruludur. Apple bu yaklaşımı protocol oriented programming olarak adlandırır.
+
+### Property ve metot gereksinimleri
+
+Protokolde property'ler her zaman `var` ile yazılır ve sadece okunabilir mi (`{ get }`) yoksa yazılabilir mi (`{ get set }`) olduğu belirtilir. Stored mı computed mı olacağına uyan tip karar verir. Değer tipinin kendisini değiştiren metotlar `mutating` olarak yazılır. Böylece hem struct'lar hem class'lar protokole uyabilir.
+
+```swift
+protocol Trackable {
+    var eventName: String { get }
+    var parameters: [String: String] { get }
+}
+
+struct ScreenView: Trackable {
+    let screen: String
+
+    var eventName: String { "screen_view" }
+    var parameters: [String: String] { ["screen": screen] }
+}
+
+struct Purchase: Trackable {
+    let sku: String
+    let amount: Decimal
+
+    let eventName = "purchase"
+    var parameters: [String: String] { ["sku": sku, "amount": "\(amount)"] }
+}
+
+let events: [any Trackable] = [ScreenView(screen: "Home"), Purchase(sku: "KB-01", amount: 1200)]
+for event in events {
+    print(event.eventName, event.parameters.count)
+}
+// screen_view 1
+// purchase 2
+```
+
+`ScreenView` gereksinimi computed property ile, `Purchase` ise `eventName`'i stored property ile karşılıyor. Protokol için ikisi de geçerlidir.
+
+> [!WARNING]
+> Protokolde property olarak tanımlanan bir gereksinim, uyan tipte metot ile karşılanamaz. `var summary: String { get }` gereksinimine `func summary() -> String` yazmak protokol uyumunu sağlamaz ve derleyici "does not conform" hatası verir.
+
+### Protokolü tip olarak kullanmak
+
+Protokol bir tip olarak kullanılabilir: parametre, dönüş tipi, property ya da koleksiyon elemanı. Bu durumda Swift 5.6'dan itibaren başına `any` yazılır: `[any Trackable]`. `any`, "bu protokole uyan herhangi bir tip" anlamına gelen bir kutudur ve farklı tiplerin aynı koleksiyonda tutulmasını sağlar. Ayrıntılar [Opaque and Boxed Protocol Types](#25-opaque-and-boxed-protocol-types) bölümündedir.
+
+### Delegation
+
+Delegation, bir nesnenin bazı kararları ya da olay bildirimlerini başka bir nesneye devretmesidir. Devredilecek işler bir protokolle tanımlanır. UIKit'in neredeyse tamamı bu kalıp üzerine kuruludur: `UITableViewDelegate`, `UITextFieldDelegate`, `URLSessionDelegate`.
+
+```swift
+protocol DownloadManagerDelegate: AnyObject {
+    func downloadManager(_ manager: DownloadManager, didUpdateProgress progress: Double)
+    func downloadManager(_ manager: DownloadManager, didFinishWith data: Data)
+}
+
+final class DownloadManager {
+    weak var delegate: DownloadManagerDelegate?
+
+    func start() {
+        for step in 1...2 {
+            delegate?.downloadManager(self, didUpdateProgress: Double(step) / 2)
+        }
+        delegate?.downloadManager(self, didFinishWith: Data([0xCA, 0xFE]))
+    }
+}
+
+final class DownloadScreen: DownloadManagerDelegate {
+    let manager = DownloadManager()
+
+    init() {
+        manager.delegate = self
+    }
+
+    func downloadManager(_ manager: DownloadManager, didUpdateProgress progress: Double) {
+        print("Progress: \(Int(progress * 100))%")
+    }
+
+    func downloadManager(_ manager: DownloadManager, didFinishWith data: Data) {
+        print("Finished, \(data.count) bytes")
+    }
+}
+
+let screen = DownloadScreen()
+screen.manager.start()
+// Progress: 50%
+// Progress: 100%
+// Finished, 2 bytes
+```
+
+> [!IMPORTANT]
+> Delegate property'si her zaman `weak` olarak tanımlanır. Ekran manager'ı güçlü şekilde tutar. Manager da ekranı güçlü şekilde tutsaydı ikisi birbirini bellekte tutardı ve hiçbiri silinmezdi (retain cycle). `weak` sadece class instance'larına uygulanabildiği için delegate protokolü `AnyObject` ile kısıtlanır. Delegate metotlarının ilk parametresi olarak gönderen nesnenin verilmesi de Apple'ın standart kalıbıdır. Bu sayede bir delegate birden fazla nesneyi dinleyebilir.
+
+### Protocol extensions ve varsayılan implementasyon
+
+Protokole extension ile implementasyon eklenebilir. Protokole uyan her tip bu implementasyonu otomatik olarak kazanır. Gereksinim listesindeki bir metoda extension'da implementasyon verilirse, bu varsayılan implementasyon olur. Uyan tip isterse kendi implementasyonunu yazar.
+
+```swift
+protocol Exportable {
+    var exportFields: [String] { get }
+    func csvLine() -> String
+}
+
+extension Exportable {
+    func csvLine() -> String {
+        exportFields.joined(separator: ",")
+    }
+}
+
+struct Customer: Exportable {
+    let name: String
+    let email: String
+    var exportFields: [String] { [name, email] }
+}
+
+struct Note: Exportable {
+    let text: String
+    var exportFields: [String] { [text] }
+
+    func csvLine() -> String {
+        "\"\(text.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+}
+
+print(Customer(name: "Ada", email: "ada@example.com").csvLine())    // Ada,ada@example.com
+print(Note(text: #"Say "hi""#).csvLine())                           // "Say ""hi"""
+```
+
+> [!CAUTION]
+> Sadece extension'da tanımlanan, protokolün gereksinim listesinde olmayan bir metot dinamik dispatch kullanmaz. Değişkenin tipi protokol ise, uyan tip aynı metodu kendisi yazmış olsa bile extension'daki implementasyon çalışır. Bu fark sessiz ve zor bulunan hatalara yol açar.
+>
+> ```swift
+> protocol Greeter {
+>     func greet() -> String
+> }
+>
+> extension Greeter {
+>     func greet() -> String { "Hello" }
+>     func farewell() -> String { "Bye" }    // gereksinim listesinde yok
+> }
+>
+> struct FormalGreeter: Greeter {
+>     func greet() -> String { "Good morning" }
+>     func farewell() -> String { "Farewell" }
+> }
+>
+> let greeter: any Greeter = FormalGreeter()
+> print(greeter.greet())       // Good morning, gereksinim olduğu için dinamik
+> print(greeter.farewell())    // Bye, sadece extension'da olduğu için statik
+> ```
+
+### Protokol bileşimi ve inheritance
+
+Bir protokol başka protokollerden türeyebilir. Bir değerin birden fazla protokole aynı anda uyması gerekiyorsa `&` ile birleştirilir.
+
+```swift
+protocol Named {
+    var name: String { get }
+}
+
+protocol Priced {
+    var price: Decimal { get }
+}
+
+struct Course: Named, Priced {
+    let name: String
+    let price: Decimal
+}
+
+func label(for item: some Named & Priced) -> String {
+    "\(item.name) - \(item.price)"
+}
+
+print(label(for: Course(name: "Swift Concurrency", price: 499)))
+```
+
+### Synthesized conformance
+
+`Equatable`, `Hashable`, `Comparable` (raw value'su olmayan enum'larda) ve `Codable` için Swift, uyumu otomatik olarak üretebilir. Koşul, tüm stored property'lerin (ya da associated value'ların) da aynı protokole uymasıdır.
+
+```swift
+struct Tag: Hashable, Codable {
+    let id: Int
+    let title: String
+}
+
+let uniqueTags: Set<Tag> = [Tag(id: 1, title: "swift"), Tag(id: 1, title: "swift")]
+print(uniqueTags.count)    // 1
+
+enum Severity: Comparable {
+    case low, medium, high
+}
+
+print([Severity.high, .low, .medium].sorted().map { "\($0)" })    // ["low", "medium", "high"]
+```
+
+Sıralama kuralı otomatik üretilemeyen tiplerde `Comparable` elle yazılır. Sadece `<` operatörünü yazmak yeterlidir, diğer karşılaştırma operatörleri protokolün varsayılan implementasyonlarından gelir.
+
+```swift
+struct AppVersion: Comparable {
+    let major: Int
+    let minor: Int
+
+    static func < (lhs: AppVersion, rhs: AppVersion) -> Bool {
+        (lhs.major, lhs.minor) < (rhs.major, rhs.minor)
+    }
+}
+
+let installed = AppVersion(major: 2, minor: 9)
+let required = AppVersion(major: 2, minor: 10)
+print(installed < required)    // true, string olarak karşılaştırılsaydı "2.9" büyük çıkardı
+```
+
+> [!TIP]
+> Bir tipi `Comparable` yapmanın kazancı, `sorted()`, `min()`, `max()` ve range gibi tüm standart kütüphane API'lerini ek kod yazmadan kullanabilmektir. Maliyeti, tip için tek bir "doğal" sıralama seçmek zorunda kalmaktır. Tip farklı ekranlarda farklı ölçütlerle sıralanıyorsa (tarihe göre, fiyata göre) `Comparable` yerine `sorted(by:)` ya da key path ile sıralama tercih edilir.
+
+### Protokol ile test edilebilirlik
+
+Bir bileşenin bağımlılığını somut bir tip yerine protokol olarak almak, testte gerçek bağımlılık yerine sahte bir implementasyon vermeyi sağlar. Bu yaklaşım dependency injection olarak adlandırılır.
+
+```swift
+protocol ArticleFetching {
+    func fetchTitles() throws -> [String]
+}
+
+struct StubArticleService: ArticleFetching {
+    let result: Result<[String], Error>
+    func fetchTitles() throws -> [String] { try result.get() }
+}
+
+struct ArticleListModel {
+    let service: any ArticleFetching
+
+    func headline() -> String {
+        guard let titles = try? service.fetchTitles(), let first = titles.first else {
+            return "No articles"
+        }
+        return first
+    }
+}
+
+let model = ArticleListModel(service: StubArticleService(result: .success(["Swift 6 is here"])))
+print(model.headline())    // Swift 6 is here
+```
+
+### Mülakat soruları
+
+<details>
+<summary><b>Protocol oriented programming nedir, class inheritance'a göre avantajı ne?</b></summary>
+
+Davranışları ve sözleşmeleri class hiyerarşisi yerine protokollerle tanımlama ve paylaşılan kodu protocol extension'larla sağlama yaklaşımıdır. Protokollere struct ve enum'lar da uyabilir, bu sayede value semantics korunur. Bir tip birden fazla protokole uyabilir, oysa tek bir superclass'tan türeyebilir. Sıkı ve derin hiyerarşiler oluşmaz. Her tip sadece ihtiyacı olan yetenekleri alır.
+</details>
+
+<details>
+<summary><b>Delegate neden weak tutulur, protokol neden AnyObject ile kısıtlanır?</b></summary>
+
+Delegate genellikle kendisine delegate olan nesneyi zaten güçlü şekilde tutar. Örneğin bir view controller kendi table view'ını tutar. Delegate de güçlü tutulsaydı iki nesne birbirini tutar ve retain cycle oluşurdu. `weak` sadece reference type'lara uygulanabilir. Protokolü `AnyObject` ile kısıtlamak, sadece class'ların uyabileceğini derleyiciye söyler ve `weak var delegate` tanımını mümkün kılar.
+</details>
+
+<details>
+<summary><b>Protocol extension'da tanımlanan ama protokol gereksinimlerinde olmayan bir metodu uyan tip de yazarsa hangisi çalışır?</b></summary>
+
+Değişkenin derleme anındaki tipine bağlıdır. Değişkenin tipi somut tipse, tipin kendi implementasyonu çalışır. Tipi protokol ise (`any P` ya da generic `T: P`), extension'daki implementasyon çalışır. Çünkü gereksinim listesinde olmayan metotlar dinamik dispatch kullanmaz, statik olarak çözülür. Metodun uyan tipe göre değişmesi isteniyorsa protokolün gereksinim listesine eklenmesi gerekir.
+</details>
+
+<details>
+<summary><b>Bir tipi Comparable yapmanın maliyeti ve kazancı ne?</b></summary>
+
+Kazancı, `<` operatörünü bir kez yazarak `sorted()`, `min()`, `max()`, `>`, `<=` ve range gibi tüm standart API'leri kullanabilmektir. Maliyeti, tip için tek ve kalıcı bir doğal sıralama seçmektir. Uygulama versiyonu gibi tek bir doğal sırası olan tiplerde mantıklıdır. Farklı ekranlarda farklı ölçütlere göre sıralanan bir ürün listesinde ise `Comparable` yerine `sorted(by:)` kullanılır.
+</details>
+
+<details>
+<summary><b>Protokoller test edilebilirliğe nasıl katkı sağlar?</b></summary>
+
+Bir bileşen bağımlılığını somut bir tip yerine protokol olarak alırsa, testte o protokole uyan sahte bir implementasyon verilebilir. Böylece ağ ya da veritabanı gibi yavaş ve kontrol edilemeyen bağımlılıklar olmadan, istenen her senaryo (başarılı cevap, hata, boş liste) kolayca test edilebilir.
+</details>
+
+---
+
+## 24. Generics
+
+Generic kod, herhangi bir tiple çalışabilen ama tip güvenliğini kaybetmeyen fonksiyon ve tipler yazmayı sağlar. `Array`, `Dictionary`, `Optional` ve `Result` generic tiplerdir. `Array<Element>` her eleman tipi için ayrı ayrı yazılmamıştır, ama `[Int]` içine `String` koymak yine de derleme hatasıdır.
+
+### Generic fonksiyonlar
+
+Fonksiyon adından sonra köşeli parantez içinde bir tip parametresi tanımlanır. Bu parametre, fonksiyon her çağrıldığında gerçek bir tiple yer değiştirir.
+
+```swift
+func decode<T: Decodable>(_ type: T.Type, from json: String) throws -> T {
+    try JSONDecoder().decode(T.self, from: Data(json.utf8))
+}
+
+struct Profile: Decodable {
+    let name: String
+}
+
+let profile = try decode(Profile.self, from: #"{"name": "Ada"}"#)
+let numbers = try decode([Int].self, from: "[1, 2, 3]")
+print(profile.name, numbers.count)    // Ada 3
+```
+
+### Generic tipler
+
+```swift
+struct Page<Item> {
+    let items: [Item]
+    let pageNumber: Int
+    let hasMore: Bool
+
+    func map<NewItem>(_ transform: (Item) -> NewItem) -> Page<NewItem> {
+        Page<NewItem>(items: items.map(transform), pageNumber: pageNumber, hasMore: hasMore)
+    }
+}
+
+let page = Page(items: [3, 1, 2], pageNumber: 1, hasMore: true)
+let labels = page.map { "Item \($0)" }
+print(labels.items)    // ["Item 3", "Item 1", "Item 2"]
+```
+
+`Page<Int>` ile `Page<String>` farklı tiplerdir. Derleyici her birini ayrı ayrı kontrol eder.
+
+### Type constraints
+
+Tip parametresine kısıt eklenerek sadece belirli bir protokole uyan ya da belirli bir class'tan türeyen tiplerin kabul edilmesi sağlanır. Kısıt, fonksiyonun içinde o tip üzerinde hangi işlemlerin yapılabileceğini belirler.
+
+```swift
+func mostFrequent<T: Hashable>(in values: [T]) -> T? {
+    var counts: [T: Int] = [:]
+    for value in values {
+        counts[value, default: 0] += 1
+    }
+    return counts.max { $0.value < $1.value }?.key
+}
+
+print(mostFrequent(in: ["ios", "swift", "ios"]) ?? "none")    // ios
+```
+
+`T: Hashable` kısıtı olmasaydı `T` sözlük anahtarı olarak kullanılamazdı.
+
+### Associated types
+
+Protokoller generic parametre almaz. Bunun yerine `associatedtype` ile, protokole uyan tipin belirleyeceği bir yer tutucu tip tanımlar. Swift'in `Sequence` ve `Collection` protokolleri `Element` associated type'ı ile çalışır.
+
+```swift
+protocol Repository {
+    associatedtype Entity: Identifiable
+
+    func save(_ entity: Entity)
+    func find(id: Entity.ID) -> Entity?
+    var all: [Entity] { get }
+}
+
+struct Book: Identifiable {
+    let id: Int
+    let title: String
+}
+
+final class InMemoryRepository<Entity: Identifiable>: Repository {
+    private var storage: [Entity.ID: Entity] = [:]
+
+    func save(_ entity: Entity) {
+        storage[entity.id] = entity
+    }
+
+    func find(id: Entity.ID) -> Entity? {
+        storage[id]
+    }
+
+    var all: [Entity] {
+        Array(storage.values)
+    }
+}
+
+let books = InMemoryRepository<Book>()
+books.save(Book(id: 1, title: "The Swift Programming Language"))
+print(books.find(id: 1)?.title ?? "missing")
+```
+
+Burada kullanılan `Identifiable`, standart kütüphanedeki protokoldür. Kendi `ID` associated type'ı vardır ve `Hashable` olması gerekir. Bu yüzden `Entity.ID` sözlük anahtarı olarak kullanılabiliyor.
+
+### Generic where clauses
+
+`where` ile tip parametreleri ve associated type'lar üzerine daha ayrıntılı koşullar yazılır. Koşullar fonksiyonlara, extension'lara ve tek tek metotlara uygulanabilir.
+
+```swift
+func haveSameItems<A: Collection, B: Collection>(_ a: A, _ b: B) -> Bool
+where A.Element == B.Element, A.Element: Hashable {
+    Set(a) == Set(b)
+}
+
+print(haveSameItems(["a", "b"], Set(["b", "a"])))    // true
+
+extension Page where Item: Identifiable {
+    var ids: [Item.ID] {
+        items.map(\.id)
+    }
+}
+
+let bookPage = Page(items: [Book(id: 7, title: "SwiftUI")], pageNumber: 1, hasMore: false)
+print(bookPage.ids)    // [7]
+```
+
+`Page<Book>` üzerinde `ids` property'si vardır, `Page<Int>` üzerinde yoktur. Extension sadece koşulu sağlayan tiplere uygulanır.
+
+> [!TIP]
+> Generic mi, `any` protokol mü? Tek tip ile çalışan ve performansın önemli olduğu kodda generic (`<T: P>` ya da parametrede `some P`) tercih edilir. Derleyici gerçek tipi bilir ve her tip için optimize edilmiş kod üretebilir. Farklı tiplerin aynı koleksiyonda karıştırılması gerekiyorsa `any P` kullanılır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Generics ne problemi çözer?</b></summary>
+
+Aynı mantığı farklı tipler için tekrar tekrar yazmadan, tip güvenliğini kaybetmeden yazmayı sağlar. `Any` kullanmak da kodu tekrar kullanılabilir yapar ama tip bilgisini kaybettirir ve çalışma anında cast gerektirir. Generic kodda tip bilgisi korunur, hatalar derleme anında yakalanır ve derleyici her tip için optimize edilmiş kod üretebilir.
+</details>
+
+<details>
+<summary><b>associatedtype nedir, protokoller neden generic parametre yerine bunu kullanır?</b></summary>
+
+Protokolde, gerçek tipi protokole uyan tipin belirleyeceği bir yer tutucudur. Örneğin `Collection`'ın `Element`'i ya da bir `Repository`'nin `Entity`'si. Generic parametre, tipi kullanan tarafın seçtiği bir şeydir (`Array<Int>`). Associated type ise uyan tipin kendi doğasının bir parçasıdır. Bir `[String]` dizisinin elemanı her zaman `String`'dir, kullanan taraf bunu ayrıca seçmez.
+</details>
+
+<details>
+<summary><b>Generic bir tipte sadece belirli eleman tipleri için çalışan bir metot nasıl eklersin?</b></summary>
+
+`where` koşullu bir extension yazarım: `extension Page where Item: Identifiable { ... }`. Bu extension'daki metot ve property'ler sadece koşulu sağlayan tiplerde görünür. Standart kütüphanede `Array`'in `Equatable` elemanlarda `contains(_:)` metoduna sahip olması aynı yöntemle yapılmıştır.
+</details>
+
+---
+
+## 25. Opaque and Boxed Protocol Types
+
+Bir protokolü tip olarak kullanmanın iki yolu vardır: opaque type (`some P`) ve boxed protocol type (`any P`). İkisi de "P'ye uyan bir tip" der ama çok farklı garantiler verir.
+
+### some: opaque type
+
+`some P`, derleyicinin bildiği ama çağırandan gizlenen tek bir somut tiptir. Fonksiyon her zaman aynı somut tipi döndürmek zorundadır. Tip bilgisi korunduğu için derleyici optimizasyon yapabilir ve associated type'ı olan protokoller de kullanılabilir.
+
+```swift
+protocol Shape {
+    func area() -> Double
+}
+
+struct Circle: Shape {
+    let radius: Double
+    func area() -> Double { .pi * radius * radius }
+}
+
+struct Square: Shape {
+    let side: Double
+    func area() -> Double { side * side }
+}
+
+func makeBadge() -> some Shape {
+    Circle(radius: 1)
+}
+
+// func makeShape(rounded: Bool) -> some Shape {
+//     if rounded { return Circle(radius: 1) }
+//     return Square(side: 2)
+// }
+// error: function declares an opaque return type 'some Shape', but the return statements in its body do not have matching underlying types
+```
+
+SwiftUI'daki `var body: some View` bu mekanizmayı kullanır. Body'nin gerçek tipi `VStack<TupleView<(Text, Button<Text>)>>` gibi uzun ve iç içe bir tiptir. `some View` bu tipi yazma zorunluluğunu ortadan kaldırırken SwiftUI'ın gerçek tipi bilmesini sağlar.
+
+Parametre konumunda `some P` yazmak generic yazımın kısa halidir. `func render(_ shape: some Shape)` ile `func render<S: Shape>(_ shape: S)` aynı anlama gelir.
+
+### any: boxed protocol type
+
+`any P`, P'ye uyan herhangi bir tipi tutabilen bir kutudur (existential). Somut tip derleme anında bilinmez ve çalışma anında değişebilir. Bu sayede farklı tipler aynı koleksiyonda tutulabilir.
+
+```swift
+let shapes: [any Shape] = [Circle(radius: 1), Square(side: 2)]
+let totalArea = shapes.reduce(0) { $0 + $1.area() }
+print(Int(totalArea))    // 7
+```
+
+Bu esnekliğin bir maliyeti vardır. Değer bir kutuya konur, büyük değerler için heap'te yer ayrılabilir ve metot çağrıları dolaylı olarak yapılır. Ayrıca tip bilgisi silindiği için (type erasure) bazı işlemler yapılamaz.
+
+### Kutu protokole uymaz
+
+`any Shape` kutusunun kendisi `Shape` protokolüne uymaz. Protokollere sadece somut tipler uyabilir. Bu durum generic kodda karşımıza çıkar.
+
+```swift
+func describe<S: Shape>(_ shape: S) -> String {
+    "Area: \(Int(shape.area()))"
+}
+
+func totalArea<S: Shape>(_ shapes: [S]) -> Double {
+    shapes.reduce(0) { $0 + $1.area() }
+}
+
+let single: any Shape = Square(side: 3)
+print(describe(single))    // Area: 9
+
+let mixed: [any Shape] = [Circle(radius: 1), Square(side: 2)]
+// totalArea(mixed)
+// error: type 'any Shape' cannot conform to 'Shape'
+```
+
+Tek bir `any Shape` değeri generic fonksiyona verilebilir. Swift 5.7'den itibaren derleyici kutuyu otomatik olarak açar ve içindeki gerçek tipi `S` olarak kullanır (implicitly opened existential). Dizi ise açılamaz. `[S]` tüm elemanların aynı tipte olmasını ister, `[any Shape]` ise farklı tipler içerir. `S` yerine `any Shape` konmak zorunda kalınır ve kutu `Shape`'e uymadığı için kod derlenmez.
+
+### Karşılaştırma
+
+| | `some P` | `any P` |
+|---|---|---|
+| Somut tip | Tek, sabit, derleyici biliyor | Herhangi biri, çalışma anında değişebilir |
+| Farklı tipleri karıştırmak | Mümkün değil | Mümkün |
+| Performans | Doğrudan çağrı, optimizasyon mümkün | Kutu ve dolaylı çağrı maliyeti |
+| Tip bilgisi | Korunur | Silinir (type erasure) |
+| Tipik kullanım | SwiftUI `body`, generic parametre, gizlenmiş dönüş tipi | Heterojen koleksiyonlar, saklanan bağımlılıklar (`let service: any APIClient`) |
+
+> [!TIP]
+> Varsayılan tercih `some`'dır. Farklı tiplerin aynı yerde tutulması gerçekten gerekiyorsa `any`'ye geçilir.
+
+### Mülakat soruları
+
+<details>
+<summary><b>some ile any arasındaki fark ne?</b></summary>
+
+`some P` tek ve sabit bir somut tiptir. Derleyici bu tipi bilir ama çağırandan gizler. Tip bilgisi korunduğu için optimizasyon yapılabilir. `any P` ise P'ye uyan herhangi bir tipi tutabilen bir kutudur. Tip bilgisi silinir ve çalışma anında farklı tipler tutulabilir. Bu esnekliğin bedeli kutulama ve dolaylı çağrı maliyetidir. Varsayılan olarak `some` kullanırım. Farklı tipleri bir koleksiyonda karıştırmam gerekiyorsa `any` kullanırım.
+</details>
+
+<details>
+<summary><b>SwiftUI'da body neden some View?</b></summary>
+
+Body'nin gerçek tipi, kullanılan view'lara ve modifier'lara göre oluşan uzun ve iç içe bir generic tiptir. Bunu elle yazmak pratik değildir. `some View` bu tipi gizler ama derleyiciye ve SwiftUI'a gerçek tipi bildirir. SwiftUI bu tip bilgisini, view hiyerarşisinde neyin değiştiğini verimli şekilde tespit etmek için kullanır. `any View` kullanılsaydı bu bilgi kaybolurdu.
+</details>
+
+<details>
+<summary><b>[any Shape] dizisi neden <S: Shape>(_ shapes: [S]) fonksiyonuna verilemez?</b></summary>
+
+`[S]` tüm elemanların aynı somut tipte olmasını ister. `[any Shape]` ise farklı tipler içerebilir. Bu yüzden `S` yerine ancak `any Shape` konabilir. Ancak `any Shape` bir kutudur ve kutunun kendisi `Shape` protokolüne uymaz, çünkü protokollere sadece somut tipler uyabilir. Tek bir `any Shape` değeri ise Swift 5.7'den itibaren otomatik olarak açıldığı için generic fonksiyona verilebilir.
+</details>
+
+<details>
+<summary><b>Type erasure ne demek?</b></summary>
+
+Bir değerin somut tip bilgisini gizleyip sadece protokol arayüzü üzerinden kullanılmasıdır. `any P` dilin yerleşik type erasure mekanizmasıdır. Swift 5.7 öncesinde associated type'ı olan protokoller `any` ile kullanılamadığı için `AnyPublisher` ya da `AnyHashable` gibi elle yazılmış sarmalayıcı tipler kullanılırdı. Bu tipler hâlâ framework'lerde karşımıza çıkar.
+</details>
+
+---
+
+## 26. Automatic Reference Counting
+
+Swift, class instance'larının belleğini ARC ile yönetir. Her class instance'ı için o nesneyi gösteren güçlü (strong) referansların sayısı tutulur. Sayı sıfıra düştüğünde nesne bellekten silinir ve `deinit` çalışır. ARC sadece reference type'lar (class, actor, closure) için geçerlidir. Struct ve enum'lar referans sayılmaz.
+
+ARC, Java ya da C#'taki garbage collector'dan farklıdır. Arka planda periyodik olarak çalışan bir toplayıcı yoktur. Sayma işlemleri derleyicinin eklediği kodla anında yapılır ve nesne referansı biter bitmez silinir. Bunun karşılığında ARC, birbirini tutan nesneleri (retain cycle) kendi başına çözemez.
+
+### Strong reference cycle
+
+İki nesne birbirini güçlü referansla tutarsa referans sayıları hiçbir zaman sıfıra düşmez. Dışarıdan bu nesnelere ulaşan son referans da kaldırılsa bile ikisi bellekte kalır. Bu duruma memory leak denir.
+
+```swift
+final class ChatRoom {
+    let name: String
+    var moderator: Moderator?
+
+    init(name: String) { self.name = name }
+    deinit { print("ChatRoom \(name) deallocated") }
+}
+
+final class Moderator {
+    let name: String
+    weak var room: ChatRoom?    // weak olmasaydı retain cycle oluşurdu
+
+    init(name: String) { self.name = name }
+    deinit { print("Moderator \(name) deallocated") }
+}
+
+func openRoom() {
+    let room = ChatRoom(name: "ios-dev")
+    let moderator = Moderator(name: "Ada")
+    room.moderator = moderator
+    moderator.room = room
+}
+
+openRoom()
+// ChatRoom ios-dev deallocated
+// Moderator Ada deallocated
+```
+
+`room` property'si `weak` olmasaydı, fonksiyon bittiğinde iki nesne birbirini tutmaya devam eder ve hiçbir `deinit` mesajı görünmezdi.
+
+### weak ve unowned
+
+| | `weak` | `unowned` |
+|---|---|---|
+| Referans sayısını artırır mı | Hayır | Hayır |
+| Tip | Her zaman optional `var` | Optional olmayabilir, `let` olabilir |
+| Nesne silinince | Otomatik olarak `nil` olur | Erişilirse crash olur |
+| Ne zaman | Diğer nesne daha kısa yaşayabilir ya da yaşam süresi belirsiz | Diğer nesne en az bu nesne kadar uzun yaşar, garanti |
+
+```swift
+final class Account {
+    let email: String
+    var card: CreditCard?
+
+    init(email: String) { self.email = email }
+    deinit { print("Account deallocated") }
+}
+
+final class CreditCard {
+    let lastFour: String
+    unowned let owner: Account    // kart, hesabı olmadan var olamaz
+
+    init(lastFour: String, owner: Account) {
+        self.lastFour = lastFour
+        self.owner = owner
+    }
+    deinit { print("Card \(lastFour) deallocated") }
+}
+
+func createAccount() {
+    let account = Account(email: "ada@example.com")
+    account.card = CreditCard(lastFour: "4242", owner: account)
+    print(account.card?.owner.email ?? "")
+}
+
+createAccount()
+// ada@example.com
+// Account deallocated
+// Card 4242 deallocated
+```
+
+> [!IMPORTANT]
+> `weak` ile `unowned` arasındaki seçim tamamen yaşam süresine bağlıdır. Referans verilen nesnenin, referansı tutan nesneden önce silinme ihtimali varsa `weak`. Silinme ihtimali hiç yoksa, yani iki nesne birlikte yaşayıp birlikte ölüyorsa ya da referans verilen daha uzun yaşıyorsa `unowned`. Emin değilsen `weak` güvenli olan seçimdir.
+
+### Closure'larda retain cycle
+
+Closure'lar da reference type'tır ve kullandıkları nesneleri güçlü şekilde yakalar. Bir class bir closure'ı property olarak saklıyorsa ve closure içinde `self` kullanılıyorsa, nesne closure'ı, closure da nesneyi tutar.
+
+```swift
+final class SearchViewModel {
+    var query = ""
+    var onResultsChange: (([String]) -> Void)?
+    private var searchHandler: (() -> Void)?
+
+    func configure() {
+        searchHandler = { [weak self] in
+            guard let self else { return }
+            self.onResultsChange?(["Result for \(self.query)"])
+        }
+    }
+
+    func search(_ text: String) {
+        query = text
+        searchHandler?()
+    }
+
+    deinit { print("SearchViewModel deallocated") }
+}
+
+func runSearch() {
+    let viewModel = SearchViewModel()
+    viewModel.onResultsChange = { print($0) }
+    viewModel.configure()
+    viewModel.search("swift")
+}
+
+runSearch()
+// ["Result for swift"]
+// SearchViewModel deallocated
+```
+
+`[weak self]` yazılmasaydı `searchHandler` closure'ı `self`'i güçlü tutardı. `self` de `searchHandler`'ı tuttuğu için `deinit` hiçbir zaman çalışmazdı.
+
+> [!TIP]
+> Her closure'da `[weak self]` gerekmez. Ölçüt, closure'ın saklanıp saklanmadığıdır. `map`, `filter` gibi non-escaping closure'lar fonksiyon bitince yok olur, retain cycle oluşturamaz. `UIView.animate` ya da tek seferlik bir ağ isteği gibi kısa süreli escaping closure'lar nesneyi geçici olarak uzatır ama cycle oluşturmaz. Asıl risk, closure'ın `self` tarafından doğrudan ya da dolaylı olarak saklanmasıdır: property olarak tutulan callback'ler, `Timer`, `NotificationCenter` observer'ları ve Combine abonelikleri.
+
+> [!NOTE]
+> `guard let self else { return }` closure'ın başında `self`'i bir kez güçlü referansa çevirir. Böylece closure çalıştığı sürece nesne silinmez ve gövdede tekrar tekrar `self?` yazmaya gerek kalmaz. Nesne zaten silinmişse closure hiçbir şey yapmadan çıkar.
+
+### Retain cycle'ı tespit etmek
+
+- Şüphelenilen class'a `deinit` içinde bir `print` eklenir. Ekran kapatıldığında mesaj görünmüyorsa nesne bellekte kalmıştır.
+- Xcode'daki Debug Memory Graph, bellekteki nesneleri ve aralarındaki referansları gösterir. Retain cycle'lar mor ünlem işaretiyle işaretlenir.
+- Instruments'taki Leaks ve Allocations araçları, uygulama çalışırken sızıntıları ve bellek büyümesini gösterir.
+
+### Mülakat soruları
+
+<details>
+<summary><b>ARC nasıl çalışır, garbage collection'dan farkı ne?</b></summary>
+
+Her class instance'ı için güçlü referans sayısı tutulur. Derleyici, referans oluşturulan ve bırakılan yerlere sayacı artıran ve azaltan kodu derleme anında ekler. Sayı sıfıra düştüğünde nesne hemen silinir. Garbage collector ise arka planda periyodik olarak çalışır ve ulaşılamayan nesneleri toplar. ARC'ın avantajı, silinme anının belirli olması ve uygulamayı duraksatan toplama işlemleri olmamasıdır. Dezavantajı, birbirini tutan nesneleri kendi başına çözememesidir.
+</details>
+
+<details>
+<summary><b>Retain cycle nedir, nasıl oluşur, nasıl çözülür?</b></summary>
+
+İki ya da daha fazla nesnenin birbirini güçlü referansla tutmasıdır. Referans sayıları hiçbir zaman sıfıra düşmez ve nesneler bellekte kalır. En sık görüldüğü yerler: delegate'in güçlü tutulması, bir nesnenin property olarak sakladığı closure içinde `self`'i güçlü yakalaması ve parent ile child nesnelerin birbirini tutması. Çözüm, ilişkinin bir tarafını `weak` ya da `unowned` yapmaktır. Hangisinin seçileceği nesnelerin yaşam süresine bağlıdır.
+</details>
+
+<details>
+<summary><b>weak ile unowned arasında nasıl seçim yaparsın?</b></summary>
+
+Yaşam süresine bakarım. Referans verilen nesne, referansı tutandan önce silinebiliyorsa `weak` kullanırım. `weak` optional'dır ve nesne silinince otomatik olarak `nil` olur. Referans verilen nesnenin en az referansı tutan kadar yaşayacağı garantiyse `unowned` kullanırım, örneğin bir kredi kartı ile ait olduğu hesap. `unowned` silinmiş bir nesneye erişilirse crash olur. Emin değilsem `weak` seçerim.
+</details>
+
+<details>
+<summary><b>Her closure'da [weak self] yazmak gerekir mi?</b></summary>
+
+Hayır. Ölçüt, closure'ın `self` tarafından doğrudan ya da dolaylı olarak saklanıp saklanmadığıdır. Non-escaping closure'lar (`map`, `filter`) cycle oluşturamaz. Tek seferlik çalışıp biten escaping closure'lar nesnenin ömrünü geçici olarak uzatır ama cycle oluşturmaz. Property olarak saklanan callback'lerde, `Timer`'larda, observer'larda ve aboneliklerde ise `[weak self]` gerekir.
+</details>
+
+<details>
+<summary><b>Bir ekranın kapandıktan sonra bellekten silinmediğini nasıl anlarsın?</b></summary>
+
+İlk adım olarak `deinit` içine bir log eklerim ve ekranı kapattığımda mesajın görünüp görünmediğine bakarım. Görünmüyorsa Xcode'un Debug Memory Graph aracıyla nesneyi kimin tuttuğunu incelerim. Retain cycle'lar burada işaretli görünür. Daha kapsamlı analiz için Instruments'taki Leaks ve Allocations araçlarını kullanırım.
+</details>
+
+---
+
+## 27. Memory Safety
+
+Swift, aynı bellek alanına aynı anda çakışan erişimleri engeller. İki erişimin çakışması için üç koşulun birlikte sağlanması gerekir: en az biri yazma işlemidir, ikisi de aynı bellek alanına erişir ve süreleri örtüşür. Swift bu kuralı exclusivity olarak adlandırır. Çakışmaların çoğu derleme anında yakalanır, geri kalanı çalışma anında crash ile sonuçlanır.
+
+Erişimlerin çoğu anlıktır ve çakışma oluşturmaz. Uzun süreli erişimler ise `inout` parametreler ve `mutating` metotlar sırasında oluşur. Bu erişimler fonksiyon boyunca sürer.
+
+### inout parametrelerde çakışma
+
+```swift
+func applyStep() {
+    var stepSize = 1
+
+    func increment(_ number: inout Int) {
+        number += stepSize
+    }
+
+    // increment(&stepSize)
+    // Simultaneous accesses to 0x..., but modification requires exclusive access.
+
+    var copyOfStepSize = stepSize
+    increment(&copyOfStepSize)
+    stepSize = copyOfStepSize
+    print(stepSize)    // 2
+}
+
+applyStep()
+```
+
+Yorum satırındaki çağrı çalışma anında crash olur. `increment` fonksiyonu `stepSize` için fonksiyon boyunca süren bir yazma erişimi tutarken, gövdedeki `stepSize` okuması aynı bellek alanına ikinci bir erişimdir. Çözüm, örnekte olduğu gibi değerin önce bir kopyasını almak, işlemi kopya üzerinde yapmak ve sonucu geri yazmaktır.
+
+Aynı değişkeni iki `inout` parametreye birden vermek derleme anında hatadır.
+
+```swift
+func balance(_ x: inout Int, _ y: inout Int) {
+    let sum = x + y
+    x = sum / 2
+    y = sum - x
+}
+
+var playerOneScore = 42
+var playerTwoScore = 30
+balance(&playerOneScore, &playerTwoScore)    // geçerli
+// balance(&playerOneScore, &playerOneScore)
+// error: overlapping accesses to 'playerOneScore', but modification requires exclusive access; consider copying to a local variable
+print(playerOneScore, playerTwoScore)        // 36 36
+```
+
+### Struct property'lerinde çakışma
+
+Struct, enum ve tuple gibi value type'larda bir property'ye yazmak, değerin tamamına yazmak anlamına gelir. Bu yüzden global bir struct değişkeninin iki farklı property'sini aynı anda iki `inout` parametreye vermek çakışma sayılır. Yerel değişkenlerde ise derleyici iki property'nin örtüşmediğini kanıtlayabildiği için buna izin verir.
+
+> [!NOTE]
+> Exclusivity kuralı, Swift'in değerler üzerinde güvenle optimizasyon yapabilmesini ve value semantics'in tutarlı kalmasını sağlar. Bu kural tek thread'li kodla ilgilidir. Birden fazla thread arasındaki erişimler ise [Concurrency](#18-concurrency) bölümündeki actor ve `Sendable` mekanizmalarıyla korunur.
+
+### Mülakat soruları
+
+<details>
+<summary><b>Swift'te memory safety ve exclusive access ne demek?</b></summary>
+
+Aynı bellek alanına, en az biri yazma olan ve süreleri örtüşen iki erişim yapılamaz. Bu kurala exclusivity denir. Uzun süreli erişimler `inout` parametreler ve `mutating` metotlar sırasında oluşur. Örneğin bir değişkeni `inout` olarak alan fonksiyonun içinde aynı değişkeni okumak çakışmadır. Swift bu durumların çoğunu derleme anında, geri kalanını çalışma anında yakalar.
+</details>
+
+<details>
+<summary><b>Exclusivity kuralı data race ile aynı şey mi?</b></summary>
+
+Hayır. Exclusivity kuralı tek bir thread içindeki örtüşen erişimlerle ilgilidir, örneğin `inout` ile başlayan bir yazma devam ederken aynı değişkenin okunması. Data race ise farklı thread'lerin aynı veriye eş zamanlı erişmesidir. Data race'ler Swift 6'da actor'lar, `Sendable` ve strict concurrency kontrolleriyle engellenir.
+</details>
+
+---
+
+## 28. Access Control
+
+Access control, kodun hangi kısımlarının başka dosyalardan ve modüllerden görülebileceğini belirler. Amacı, bir tipin dışarıya açtığı arayüzü (API) iç implementasyon ayrıntılarından ayırmaktır. Böylece iç ayrıntılar, dışarıdaki kodu bozmadan değiştirilebilir.
+
+Swift'te erişim, modül ve kaynak dosya düzeyinde tanımlanır. Modül, tek başına derlenen bir kod birimidir: bir uygulama hedefi, bir framework ya da bir Swift package.
+
+### Erişim seviyeleri
+
+| Seviye | Nereden erişilebilir |
+|---|---|
+| `open` | Her yerden. Başka modüllerde subclass'ı oluşturulabilir ve override edilebilir. Sadece class ve class üyeleri için |
+| `public` | Her yerden. Başka modüllerde subclass'ı oluşturulamaz ve override edilemez |
+| `package` | Aynı Swift package içindeki tüm modüllerden |
+| `internal` | Aynı modül içinden. Varsayılan seviye |
+| `fileprivate` | Sadece aynı kaynak dosyadan |
+| `private` | Sadece tanımlandığı kapsamdan ve aynı dosyadaki o tipin extension'larından |
+
+> [!IMPORTANT]
+> Varsayılan seviye `internal`'dır. Tek modüllü bir uygulamada hiçbir şey yazmadan her şey uygulamanın her yerinden erişilebilir. Bu yüzden erişim kontrolü özellikle framework, Swift package ve modüler uygulama mimarilerinde önem kazanır. Yine de uygulama kodunda `private` kullanmak, bir tipin iç durumunu yanlışlıkla dışarıdan değiştirmeyi engeller.
+
+### private(set)
+
+Bir property'nin okunmasına izin verip dışarıdan değiştirilmesini engellemek için setter'ın erişimi ayrıca kısıtlanır. Bu, bir tipin kendi durumunu kontrol altında tutmasının en yaygın yoludur.
+
+```swift
+struct Wallet {
+    private(set) var balance: Decimal = 0
+    private var transactions: [Decimal] = []
+
+    mutating func deposit(_ amount: Decimal) {
+        precondition(amount > 0, "Deposit must be positive")
+        balance += amount
+        transactions.append(amount)
+    }
+}
+
+var wallet = Wallet()
+wallet.deposit(150)
+print(wallet.balance)       // 150
+// wallet.balance = 1_000_000
+// error: cannot assign to property: 'balance' setter is inaccessible
+```
+
+`balance` okunabilir ama sadece `deposit` üzerinden değişebilir. Böylece bakiyenin her zaman işlem kayıtlarıyla tutarlı olması garanti edilir.
+
+Public bir API'de property'nin dışarıdan okunup sadece modül içinde değiştirilmesi için `public private(set) var` ya da `public internal(set) var` yazılır.
+
+### Kurallar
+
+- Bir üye, içinde bulunduğu tipten daha açık olamaz. `private` bir class'ın üyeleri pratikte en fazla `private` erişime sahiptir.
+- Bir fonksiyon, parametre ve dönüş tiplerinden daha açık olamaz. `internal` bir tipi döndüren bir fonksiyon `public` yapılamaz.
+- Public bir tipin üyeleri varsayılan olarak `internal`'dır. Dışarıya açılması istenen her üye ayrıca `public` olarak işaretlenir.
+- Struct'ın memberwise initializer'ı, property'lerden biri `private` ise `private` olur. Public bir struct'ın memberwise initializer'ı ise `internal`'dır. Başka modüllerden kullanılabilmesi için `public init` elle yazılır.
+
+> [!TIP]
+> `private` ile `fileprivate` arasındaki seçimde varsayılan `private`'tır. Aynı dosyadaki extension'lar `private` üyelere zaten erişebildiği için `fileprivate` sadece aynı dosyada tanımlı farklı tiplerin birbirinin iç ayrıntılarına erişmesi gerektiğinde kullanılır.
+
+### Mülakat soruları
+
+<details>
+<summary><b>open ile public arasındaki fark ne?</b></summary>
+
+İkisi de modül dışından erişime izin verir. `open` ayrıca başka modüllerde subclass oluşturmaya ve override etmeye izin verir. `public` bir class başka modüllerde kullanılabilir ama türetilemez. Bu ayrım, bir framework'ün hangi class'larının bilinçli olarak genişletilmeye açık olduğunu belirtmesini sağlar.
+</details>
+
+<details>
+<summary><b>private(set) ne işe yarar, örnek verir misin?</b></summary>
+
+Property'nin okunmasını serbest bırakıp yazılmasını tipin içiyle sınırlar. Örneğin bir cüzdan tipinde `private(set) var balance` yazarım. Bakiye her yerden okunabilir ama sadece `deposit` ve `withdraw` metotları üzerinden değişir. Böylece doğrulama kuralları atlanamaz ve tipin kendi durumu üzerindeki kontrolü korunur.
+</details>
+
+<details>
+<summary><b>Varsayılan erişim seviyesi ne, tek modüllü bir uygulamada access control neden yine de önemli?</b></summary>
+
+Varsayılan `internal`'dır, yani modül içindeki her yerden erişilebilir. Tek modüllü bir uygulamada bile `private` ve `private(set)` kullanmak, bir tipin iç durumunun başka yerlerden yanlışlıkla değiştirilmesini engeller ve tipin gerçekte hangi arayüzü sunduğunu açıkça gösterir. Ayrıca derleyici, `private` ve `final` bilgilerini optimizasyon için kullanabilir.
+</details>
+
+---
+
+## 29. Advanced Operators
+
+Bu bölüm bit düzeyindeki operatörleri, taşmaya izin veren operatörleri ve kendi tiplerin için operatör tanımlamayı kapsar.
+
+### Bitwise operators
+
+`~` (NOT), `&` (AND), `|` (OR), `^` (XOR), `<<` ve `>>` (shift) operatörleri tam sayıların bitleri üzerinde çalışır. Uygulama kodunda en sık bayrak (flag) kümeleri, renk kodlarını ayrıştırma ve ikili protokol verileri ile çalışırken karşılaşılır.
+
+```swift
+let hexColor: UInt32 = 0x34C759
+let red = (hexColor >> 16) & 0xFF
+let green = (hexColor >> 8) & 0xFF
+let blue = hexColor & 0xFF
+print(red, green, blue)    // 52 199 89
+```
+
+Bayrak kümeleri için Swift'te `OptionSet` protokolü kullanılır. Her seçenek bir bittir ve set söz dizimi ile birleştirilir.
+
+```swift
+struct NotificationOptions: OptionSet {
+    let rawValue: Int
+
+    static let alert = NotificationOptions(rawValue: 1 << 0)
+    static let badge = NotificationOptions(rawValue: 1 << 1)
+    static let sound = NotificationOptions(rawValue: 1 << 2)
+}
+
+let options: NotificationOptions = [.alert, .sound]
+print(options.contains(.sound))    // true
+print(options.contains(.badge))    // false
+print(options.rawValue)            // 5
+```
+
+`UNAuthorizationOptions` ve `UIView.AutoresizingMask` gibi Apple tipleri de `OptionSet`'tir.
+
+### Overflow operators
+
+Swift'te tam sayı taşması varsayılan olarak çalışma anında crash ile sonuçlanır. Taşmanın bilinçli olarak istendiği durumlarda `&+`, `&-` ve `&*` kullanılır. Bu operatörler taşan bitleri atar ve değer başa sarar (wrap around). Hash hesaplama ve bazı kriptografik işlemler tipik kullanım alanlarıdır.
+
+```swift
+var hash: UInt8 = 250
+hash = hash &+ 10
+print(hash)    // 4
+```
+
+### Operator overloading
+
+Kendi tiplerin için var olan operatörlerin implementasyonu `static func` olarak yazılır. Bileşik atama operatörleri (`+=`) sol tarafı değiştirdiği için `inout` parametre alır. Tek operandlı operatörler `prefix` ya da `postfix` ile işaretlenir.
+
+```swift
+struct Money: Equatable {
+    var amount: Decimal
+    let currency: String
+
+    static func + (lhs: Money, rhs: Money) -> Money {
+        precondition(lhs.currency == rhs.currency, "Currency mismatch")
+        return Money(amount: lhs.amount + rhs.amount, currency: lhs.currency)
+    }
+
+    static func += (lhs: inout Money, rhs: Money) {
+        lhs = lhs + rhs
+    }
+
+    static prefix func - (value: Money) -> Money {
+        Money(amount: -value.amount, currency: value.currency)
+    }
+}
+
+var balance = Money(amount: 100, currency: "TRY")
+let refund = Money(amount: 25, currency: "TRY")
+balance += refund
+print(balance.amount)           // 125
+print((-refund).amount)         // -25
+print(balance == Money(amount: 125, currency: "TRY"))    // true
+```
+
+> [!WARNING]
+> `+=` gibi bileşik atama operatörleri değer döndürmez. `print(balance += refund)` yazmak `()` yazdırır. Önce işlem yapılır, sonra değer ayrıca yazdırılır.
+
+> [!TIP]
+> Operatör overloading sadece anlamı tartışmasız olduğunda kullanılır: para, vektör ve ölçü birimleri gibi matematiksel değerler. Bir operatörün ne yaptığını anlamak için tanımına bakmak gerekiyorsa, açık isimli bir metot daha iyi bir seçimdir.
+
+Swift yeni operatör tanımlamaya da izin verir (`prefix operator`, `infix operator` ve precedence group ile). Ancak uygulama kodunda nadiren kullanılır, çünkü ekipteki herkesin yeni bir sembolü öğrenmesi gerekir.
+
+### Mülakat soruları
+
+<details>
+<summary><b>OptionSet nedir, nerede karşına çıkar?</b></summary>
+
+Bir bit kümesini, her bitin bir seçeneği temsil ettiği tip güvenli bir set olarak modelleyen protokoldür. Seçenekler `[.alert, .sound]` şeklinde set söz dizimiyle birleştirilir ve `contains` ile kontrol edilir. Bildirim izinlerinde (`UNAuthorizationOptions`) ve view yeniden boyutlandırma maskelerinde karşımıza çıkar.
+</details>
+
+<details>
+<summary><b>Overflow operatörleri ne zaman kullanılır?</b></summary>
+
+Taşmanın hata değil beklenen davranış olduğu yerlerde. Örneğin hash hesaplamada değerin başa sarması istenir. `&+`, `&-`, `&*` taşan bitleri atar ve crash oluşturmaz. Normal operatörlerle taşma ise çalışma anında crash'e yol açar. Bu tasarım, istenmeyen taşmaların sessizce yanlış sonuç üretmesini engeller.
+</details>
+
+<details>
+<summary><b>Kendi tipin için operatör tanımlamak ne zaman doğru bir karardır?</b></summary>
+
+Operatörün anlamı herkes için açık olduğunda. Para, vektör ve ölçü birimleri gibi matematiksel değerlerde `+` ya da `==` doğal bir seçimdir. Anlamı tartışmalı olan durumlarda, örneğin iki kullanıcı nesnesini `+` ile birleştirmek, açık isimli bir metot daha okunaklıdır.
+</details>
